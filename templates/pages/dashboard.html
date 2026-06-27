@@ -1,0 +1,9 @@
+{% extends "main.html" %}
+{% block title %}Übersicht · Belegwerk{% endblock %}
+{% block page_title %}Übersicht{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block topbar_actions %}<a class="btn btn-primary btn-sm" href="{% url 'documents:choose_type' %}">+ Neues Dokument</a>{% endblock %}
+{% block content %}
+<div class="card card-pad"><p class="muted">Noch keine Dokumente erstellt. Lege dein erstes DIN-5008-A-Dokument an.</p>
+<a class="btn btn-primary" style="margin-top:12px" href="{% url 'documents:choose_type' %}">Dokument erstellen</a></div>
+{% endblock %}

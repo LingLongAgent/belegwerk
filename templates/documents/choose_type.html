@@ -1,0 +1,13 @@
+{% extends "main.html" %}
+{% block title %}Neues Dokument · Belegwerk{% endblock %}
+{% block page_title %}Neues Dokument{% endblock %}
+{% block page_sub %}<div class="page-sub">Wähle den Dokumenttyp — alle als DIN 5008 A.</div>{% endblock %}
+{% block nav_new %}active{% endblock %}
+{% block content %}
+<div class="kpi-grid">
+  {% for t in types %}
+  <div class="card card-pad"><h2 style="margin:0 0 6px;font-size:15px">{{ t.name }}</h2>
+    <p class="muted" style="font-size:13px">{{ t.desc }}</p></div>
+  {% endfor %}
+</div>
+{% endblock %}
