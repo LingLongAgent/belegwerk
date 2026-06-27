@@ -18,7 +18,7 @@ from py_doc import DocumentMeta, Party
 
 from accounts.tests import SenderProfileFactory, UserFactory
 
-from .forms import DocumentItemForm
+from .forms import DocumentItemForm, ReminderForm
 from .models import Document, DocumentClause, DocumentItem, Recipient
 
 
@@ -327,8 +327,10 @@ class InvoiceBuildTest(TestCase):
         self.assertIn("Beratung", text)
         self.assertIn("Rechnung 2026-0007", text)
 
-    def test_render_pdf_rejects_unimplemented_types(self) -> None:
-        document = DocumentFactory(doc_type=Document.Type.REMINDER)
+    def test_render_pdf_rejects_unknown_type(self) -> None:
+        # All four real types render; only a corrupt/unknown type is refused.
+        document = DocumentFactory()
+        document.doc_type = "bogus"
         with self.assertRaises(NotImplementedError):
             document.render_pdf()
 
@@ -798,6 +800,194 @@ class ContractCreateViewTest(TestCase):
         response = self.client.post(
             reverse("documents:contract_create"),
             contract_post_data(other_sender),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+
+class ReminderBuildTest(TestCase):
+    """The mapping from a saved document to a py_doc PaymentReminder."""
+
+    def _reminder_document(self, **overrides: object) -> Document:
+        fields: dict[str, object] = {
+            "doc_type": Document.Type.REMINDER,
+            "number": "2026-0123",
+            "subject": "Zahlungserinnerung 2026-0123",
+            "date": datetime.date(2026, 6, 27),
+            "reminder_stage": "1. Mahnung",
+            "ref_invoice_number": "2026-0007",
+            "ref_invoice_date": datetime.date(2026, 5, 2),
+            "ref_amount_cents": 119000,
+            "reminder_fee_cents": 500,
+            "new_deadline": datetime.date(2026, 7, 11),
+            "recipient_name": "Erika Empfänger",
+            "recipient_city": "Hamburg",
+        }
+        fields.update(overrides)
+        return DocumentFactory(**fields)
+
+    def test_build_reminder_carries_invoice_reference(self) -> None:
+        reminder = self._reminder_document().build_reminder()
+        self.assertEqual(reminder.invoice_number, "2026-0007")
+        self.assertEqual(reminder.invoice_date, "02.05.2026")
+        self.assertEqual(reminder.amount_cents, 119000)
+        self.assertEqual(reminder.new_deadline, "11.07.2026")
+        self.assertEqual(reminder.stage, "1. Mahnung")
+        self.assertEqual(reminder.reminder_fee_cents, 500)
+
+    def test_build_reminder_blank_dates_become_empty_strings(self) -> None:
+        reminder = self._reminder_document(
+            ref_invoice_date=None, new_deadline=None
+        ).build_reminder()
+        self.assertEqual(reminder.invoice_date, "")
+        self.assertEqual(reminder.new_deadline, "")
+
+    def test_build_reminder_falls_back_to_default_stage(self) -> None:
+        reminder = self._reminder_document(reminder_stage="").build_reminder()
+        self.assertEqual(reminder.stage, "Zahlungserinnerung")
+
+    def test_render_pdf_produces_form_a_pdf_with_content(self) -> None:
+        import io
+
+        from pypdf import PdfReader
+
+        pdf_bytes = self._reminder_document().render_pdf()
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+        text = "".join(
+            page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages
+        )
+        # The recipient, the referenced invoice, the open amount, the fee and the
+        # new deadline must all reach the page.
+        self.assertIn("Erika Empfänger", text)
+        self.assertIn("2026-0007", text)
+        self.assertIn("1.190,00", text)
+        self.assertIn("5,00", text)
+        self.assertIn("11.07.2026", text)
+
+
+def reminder_post_data(sender: object, **overrides: str) -> dict[str, str]:
+    """Build a valid POST payload for the reminder form.
+
+    A reminder is a flat form (no formset), so the payload is just the document
+    fields plus the euro-typed open amount and fee.
+    """
+    data = {
+        "sender": str(sender.pk),
+        "number": "2026-0123",
+        "date": "2026-06-27",
+        "subject": "Zahlungserinnerung 2026-0123",
+        "reminder_stage": "1. Mahnung",
+        "ref_invoice_number": "2026-0007",
+        "ref_invoice_date": "2026-05-02",
+        "amount_euro": "1190.00",
+        "fee_euro": "5.00",
+        "new_deadline": "2026-07-11",
+        "recipient_name": "Erika Empfänger",
+        "recipient_company": "", "recipient_street": "",
+        "recipient_postal_code": "", "recipient_city": "Hamburg",
+        "recipient_country": "", "recipient_contact": "",
+        "recipient_email": "", "recipient_phone": "", "recipient_vat_id": "",
+    }
+    data.update(overrides)
+    return data
+
+
+class ReminderFormTest(TestCase):
+    def test_euro_inputs_are_stored_as_cents(self) -> None:
+        user = UserFactory()
+        sender = SenderProfileFactory(user=user)
+        form = ReminderForm(reminder_post_data(sender), user=user)
+        self.assertTrue(form.is_valid(), form.errors)
+        document = form.save(commit=False)
+        document.user = user
+        document.doc_type = Document.Type.REMINDER
+        document.save()
+        self.assertEqual(document.ref_amount_cents, 119000)
+        self.assertEqual(document.reminder_fee_cents, 500)
+
+    def test_blank_fee_stores_zero(self) -> None:
+        user = UserFactory()
+        sender = SenderProfileFactory(user=user)
+        form = ReminderForm(
+            reminder_post_data(sender, fee_euro=""), user=user
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        document = form.save(commit=False)
+        self.assertEqual(document.reminder_fee_cents, 0)
+
+    def test_editing_shows_euros_back(self) -> None:
+        document = DocumentFactory(
+            doc_type=Document.Type.REMINDER,
+            ref_amount_cents=119000,
+            reminder_fee_cents=500,
+        )
+        form = ReminderForm(instance=document)
+        self.assertEqual(form.fields["amount_euro"].initial, Decimal("1190.00"))
+        self.assertEqual(form.fields["fee_euro"].initial, Decimal("5.00"))
+
+
+class ReminderCreateViewTest(TestCase):
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.sender = SenderProfileFactory(user=self.user)
+
+    def test_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("documents:reminder_create"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_get_prefills_today_and_default_sender(self) -> None:
+        default = SenderProfileFactory(user=self.user, is_default=True)
+        response = self.client.get(reverse("documents:reminder_create"))
+        self.assertEqual(response.status_code, 200)
+        form = response.context["form"]
+        self.assertEqual(form.initial["date"], datetime.date.today())
+        self.assertEqual(form.initial["sender"], default.pk)
+
+    def test_get_prefills_recipient_from_address_book(self) -> None:
+        recipient = RecipientFactory(
+            user=self.user, name="Aus Adressbuch", city="Bremen"
+        )
+        url = reverse("documents:reminder_create") + f"?recipient={recipient.pk}"
+        response = self.client.get(url)
+        self.assertEqual(
+            response.context["form"].initial["recipient_name"], "Aus Adressbuch"
+        )
+
+    def test_post_creates_reminder(self) -> None:
+        response = self.client.post(
+            reverse("documents:reminder_create"),
+            reminder_post_data(self.sender),
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        document = Document.objects.get(number="2026-0123")
+        self.assertEqual(document.user, self.user)
+        self.assertEqual(document.doc_type, Document.Type.REMINDER)
+        self.assertEqual(document.ref_invoice_number, "2026-0007")
+        self.assertEqual(document.ref_amount_cents, 119000)
+        self.assertEqual(document.reminder_fee_cents, 500)
+        self.assertEqual(document.new_deadline, datetime.date(2026, 7, 11))
+
+    def test_post_without_amount_is_rejected(self) -> None:
+        data = reminder_post_data(self.sender)
+        data["amount_euro"] = ""
+        response = self.client.post(reverse("documents:reminder_create"), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_post_without_sender_is_rejected(self) -> None:
+        data = reminder_post_data(self.sender)
+        data["sender"] = ""
+        response = self.client.post(reverse("documents:reminder_create"), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_cannot_use_another_users_sender(self) -> None:
+        other_sender = SenderProfileFactory()  # not owned by self.user
+        response = self.client.post(
+            reverse("documents:reminder_create"),
+            reminder_post_data(other_sender),
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Document.objects.count(), 0)

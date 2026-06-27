@@ -22,6 +22,7 @@ from .forms import (
     OfferForm,
     OfferItemFormSet,
     RecipientForm,
+    ReminderForm,
 )
 from .models import Document, Recipient
 
@@ -32,7 +33,8 @@ DOC_TYPES = [
      "url_name": "documents:offer_create"},
     {"key": "vertrag", "name": "Vertrag", "desc": "Parteien, §-Klauseln, Unterschriften.",
      "url_name": "documents:contract_create"},
-    {"key": "zahlungserinnerung", "name": "Zahlungserinnerung", "desc": "Bezug auf Rechnung, Frist."},
+    {"key": "zahlungserinnerung", "name": "Zahlungserinnerung", "desc": "Bezug auf Rechnung, Frist.",
+     "url_name": "documents:reminder_create"},
 ]
 
 
@@ -169,6 +171,40 @@ def contract_create(request: HttpRequest) -> HttpResponse:
         request,
         "documents/contract_form.html",
         {"form": form, "formset": formset},
+    )
+
+
+@login_required
+def reminder_create(request: HttpRequest) -> HttpResponse:
+    """Create a Zahlungserinnerung: reminder fields → saved Document.
+
+    Mirrors :func:`invoice_create` — today's date, the standard sender and an
+    optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
+    document of type Zahlungserinnerung. A reminder has no positions, so it is a
+    flat form (no formset); the PDF preview/download follows in M8.
+    """
+    if request.method == "POST":
+        form = ReminderForm(request.POST, user=request.user)
+        if form.is_valid():
+            document = form.save(commit=False)
+            document.user = request.user
+            document.doc_type = Document.Type.REMINDER
+            document.save()
+            messages.success(request, "Zahlungserinnerung gespeichert.")
+            return redirect("dashboard")
+    else:
+        initial = {"date": datetime.date.today()}
+        recipient_id = request.GET.get("recipient")
+        if recipient_id:
+            recipient = get_object_or_404(
+                Recipient, pk=recipient_id, user=request.user
+            )
+            initial.update(recipient.as_document_initial())
+        form = ReminderForm(user=request.user, initial=initial)
+    return render(
+        request,
+        "documents/reminder_form.html",
+        {"form": form},
     )
 
 

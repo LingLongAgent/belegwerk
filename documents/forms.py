@@ -205,6 +205,94 @@ class ContractForm(SenderScopedFormMixin, forms.ModelForm):
         }
 
 
+class ReminderForm(SenderScopedFormMixin, forms.ModelForm):
+    """The payment reminder's fields: sender, metadata, recipient and the invoice
+    being chased — its number, date and open amount, plus the new deadline, the
+    dunning stage and an optional reminder fee.
+
+    A reminder has no positions, so there is no formset: the open amount and the
+    fee are typed in euros (``*_euro`` fields) and written back to the cents the
+    model stores, the same euros-in/cents-stored rule the position rows follow.
+    """
+
+    amount_euro = forms.DecimalField(
+        label="Offener Betrag (€)",
+        min_value=0,
+        max_digits=10,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={"step": "0.01", "placeholder": "0,00"}),
+    )
+    fee_euro = forms.DecimalField(
+        label="Mahngebühr (€)",
+        min_value=0,
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        widget=forms.NumberInput(attrs={"step": "0.01", "placeholder": "0,00"}),
+        help_text="Optional — leer lassen für keine Gebühr.",
+    )
+
+    class Meta:
+        model = Document
+        fields = [
+            "sender",
+            "number",
+            "date",
+            "subject",
+            "reminder_stage",
+            "ref_invoice_number",
+            "ref_invoice_date",
+            "new_deadline",
+            "recipient_name",
+            "recipient_company",
+            "recipient_street",
+            "recipient_postal_code",
+            "recipient_city",
+            "recipient_country",
+            "recipient_contact",
+            "recipient_email",
+            "recipient_phone",
+            "recipient_vat_id",
+        ]
+        widgets = {
+            "number": forms.TextInput(attrs={"placeholder": "2026-0001"}),
+            "date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+            "subject": forms.TextInput(
+                attrs={"placeholder": "Zahlungserinnerung 2026-0001"}
+            ),
+            "ref_invoice_number": forms.TextInput(attrs={"placeholder": "2026-0007"}),
+            "ref_invoice_date": forms.DateInput(
+                attrs={"type": "date"}, format="%Y-%m-%d"
+            ),
+            "new_deadline": forms.DateInput(
+                attrs={"type": "date"}, format="%Y-%m-%d"
+            ),
+            **RECIPIENT_WIDGETS,
+        }
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        # Show the stored cents as euros when editing an existing reminder.
+        if self.instance and self.instance.pk:
+            self.fields["amount_euro"].initial = (
+                Decimal(self.instance.ref_amount_cents) / 100
+            )
+            if self.instance.reminder_fee_cents:
+                self.fields["fee_euro"].initial = (
+                    Decimal(self.instance.reminder_fee_cents) / 100
+                )
+
+    def save(self, commit: bool = True) -> Document:
+        document = super().save(commit=False)
+        amount = self.cleaned_data["amount_euro"]
+        document.ref_amount_cents = int((amount * 100).to_integral_value())
+        fee = self.cleaned_data.get("fee_euro") or Decimal("0")
+        document.reminder_fee_cents = int((fee * 100).to_integral_value())
+        if commit:
+            document.save()
+        return document
+
+
 class ContractClauseForm(forms.ModelForm):
     """One clause row: a heading and its paragraph text.
 

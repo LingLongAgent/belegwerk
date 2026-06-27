@@ -18,7 +18,16 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
-from py_doc import Contract, DocumentMeta, Form, Invoice, InvoiceItem, Offer, Party
+from py_doc import (
+    Contract,
+    DocumentMeta,
+    Form,
+    Invoice,
+    InvoiceItem,
+    Offer,
+    Party,
+    PaymentReminder,
+)
 
 from accounts.models import SenderProfile
 
@@ -31,6 +40,16 @@ DEFAULT_PAYMENT_TERMS = "Zahlbar innerhalb von 14 Tagen ohne Abzug."
 # the roles to fit the contract at hand.
 DEFAULT_PARTY_A_LABEL = "Auftraggeber"
 DEFAULT_PARTY_B_LABEL = "Auftragnehmer"
+
+# The dunning stages a small business steps through, as (stored value, label).
+# The first is py_doc's own default; the later ones are the escalating Mahnungen.
+REMINDER_STAGES = [
+    ("Zahlungserinnerung", "Zahlungserinnerung"),
+    ("1. Mahnung", "1. Mahnung"),
+    ("2. Mahnung", "2. Mahnung"),
+    ("3. Mahnung", "3. Mahnung"),
+]
+DEFAULT_REMINDER_STAGE = REMINDER_STAGES[0][0]
 
 
 class Document(models.Model):
@@ -107,6 +126,32 @@ class Document(models.Model):
         max_length=80,
         default=DEFAULT_PARTY_B_LABEL,
         help_text="Wie der Empfänger im Vertrag heißt, z. B. „Auftragnehmer“.",
+    )
+
+    # --- Zahlungserinnerung (reference to the unpaid invoice); ignored by other
+    #     types. A reminder restates an existing invoice's number, date and open
+    #     amount, then sets a new deadline and optional dunning fee. ---
+    ref_invoice_number = models.CharField(
+        "Rechnungs-Nr.",
+        max_length=60,
+        blank=True,
+        help_text="Nummer der offenen Rechnung, an die erinnert wird.",
+    )
+    ref_invoice_date = models.DateField("Rechnungsdatum", null=True, blank=True)
+    ref_amount_cents = models.PositiveIntegerField("Offener Betrag (Cent)", default=0)
+    reminder_stage = models.CharField(
+        "Stufe",
+        max_length=40,
+        choices=REMINDER_STAGES,
+        default=DEFAULT_REMINDER_STAGE,
+        help_text="Von der freundlichen Erinnerung bis zur 3. Mahnung.",
+    )
+    reminder_fee_cents = models.PositiveIntegerField("Mahngebühr (Cent)", default=0)
+    new_deadline = models.DateField(
+        "Neue Frist",
+        null=True,
+        blank=True,
+        help_text="Bis wann der offene Betrag nun gezahlt werden soll.",
     )
 
     # --- Empfänger (inline; py_doc Party) ---
@@ -231,12 +276,38 @@ class Document(models.Model):
             party_b_label=self.party_b_label or DEFAULT_PARTY_B_LABEL,
         )
 
+    def build_reminder(self) -> PaymentReminder:
+        """Assemble the py_doc :class:`PaymentReminder` for this document.
+
+        A reminder doesn't carry its own positions — it points back at an existing
+        invoice by number, date and open amount — so the stored reference fields
+        are handed straight to py_doc. The two dates are formatted to the German
+        form py_doc prints verbatim (blank when missing), amounts stay in cents.
+        """
+        invoice_date = (
+            self.ref_invoice_date.strftime("%d.%m.%Y") if self.ref_invoice_date else ""
+        )
+        new_deadline = (
+            self.new_deadline.strftime("%d.%m.%Y") if self.new_deadline else ""
+        )
+        return PaymentReminder(
+            sender=self.sender.to_sender(),
+            recipient=self.to_recipient(),
+            meta=self.to_meta(),
+            invoice_number=self.ref_invoice_number,
+            invoice_date=invoice_date,
+            amount_cents=self.ref_amount_cents,
+            new_deadline=new_deadline,
+            stage=self.reminder_stage or DEFAULT_REMINDER_STAGE,
+            reminder_fee_cents=self.reminder_fee_cents,
+        )
+
     def render_pdf(self) -> bytes:
         """Render this document to a DIN 5008 **Form A** PDF (bytes).
 
-        Dispatches on the document type; the invoice (M4), offer (M5) and
-        contract (M6) are wired here, the remaining types follow in their own
-        milestones. The app always renders Form A, so the form choice is fixed.
+        Dispatches on the document type; all four types — invoice (M4), offer
+        (M5), contract (M6) and reminder (M7) — are wired here. The app always
+        renders Form A, so the form choice is fixed.
         """
         if self.doc_type == self.Type.INVOICE:
             return self.build_invoice().render(Form.A)
@@ -244,8 +315,10 @@ class Document(models.Model):
             return self.build_offer().render(Form.A)
         if self.doc_type == self.Type.CONTRACT:
             return self.build_contract().render(Form.A)
+        if self.doc_type == self.Type.REMINDER:
+            return self.build_reminder().render(Form.A)
         raise NotImplementedError(
-            f"PDF-Erzeugung für Typ {self.doc_type!r} folgt in einem späteren Schritt."
+            f"Unbekannter Dokumenttyp {self.doc_type!r} — keine PDF-Erzeugung."
         )
 
 
