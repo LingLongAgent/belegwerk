@@ -13,6 +13,15 @@ Repo: `LingLongAgent/belegwerk`. Stack: Django + Design-System (`static/css/desi
 - Commit referenziert den Punkt, **push**, Issue schließen. Haken hier + PROGRESS.md.
 - **PDF immer DIN 5008 A** (Form.A). py_doc nicht neu bauen — als Engine nutzen.
 
+
+## Leitprinzip — INTUITIVE EINGABEMASKEN (MVP-Ziel)
+Die Formulare müssen sich mühelos bedienen lassen, auch ohne DIN-Wissen:
+- klare Abschnitte (Absender · Empfänger · Positionen · Texte), gute Defaults, Platzhalter & Hilfetexte;
+- Positionen/Klauseln per **„+ Zeile hinzufügen"/Entfernen** (Inline-Formset), Beträge in € mit **Live-Summe**;
+- sinnvolle Vorbelegung (Datum heute, fortlaufende Nummer, gespeichertes Absender-Profil);
+- sofortige, freundliche Validierung; ein klarer Primär-Button **„PDF erstellen"** mit direkter Vorschau.
+Nicht der Funktionsumfang entscheidet den MVP, sondern dass das Ausfüllen **schnell und selbsterklärend** ist.
+
 ## Aufgaben
 - [x] M0 · Scaffold — Design, Auth, Übersicht + Typ-Auswahl, py_doc-Engine eingebunden. (Tests grün)
 - [ ] M1 (#1) · Absender-Profil — Modell + Formular (Firma, Anschrift, Bank/IBAN/BIC, Steuer), pro Nutzer, wiederverwendet. Tests.
