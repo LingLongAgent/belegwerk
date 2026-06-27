@@ -12,10 +12,12 @@ import datetime
 from decimal import Decimal
 
 import factory
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from py_doc import DocumentMeta, Party
 
+from accounts.models import SenderProfile
 from accounts.tests import SenderProfileFactory, UserFactory
 
 from .forms import DocumentItemForm, ReminderForm
@@ -1277,3 +1279,43 @@ class DocumentDeleteViewTest(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertTrue(Document.objects.filter(pk=other.pk).exists())
+
+
+class SeedDemoCommandTest(TestCase):
+    """M11 — ``seed_demo`` must produce a login-ready, fully populated account."""
+
+    def test_seeds_user_profile_recipients_and_all_document_types(self) -> None:
+        from django.core.management import call_command
+
+        call_command("seed_demo")
+
+        user = get_user_model().objects.get(username="demo")
+        # The demo login must actually work, not just exist.
+        self.assertTrue(user.check_password("belegwerk-demo"))
+        # Exactly one default sender profile, so document forms preselect it.
+        self.assertEqual(
+            SenderProfile.objects.filter(user=user, is_default=True).count(), 1
+        )
+        self.assertTrue(Recipient.objects.filter(user=user).exists())
+        seeded_types = set(
+            Document.objects.filter(user=user).values_list("doc_type", flat=True)
+        )
+        self.assertEqual(seeded_types, set(Document.Type.values))
+
+    def test_every_seeded_document_renders_a_pdf(self) -> None:
+        from django.core.management import call_command
+
+        call_command("seed_demo")
+        for document in Document.objects.all():
+            pdf_bytes = document.render_pdf()
+            self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+    def test_running_twice_does_not_duplicate(self) -> None:
+        from django.core.management import call_command
+
+        call_command("seed_demo")
+        call_command("seed_demo")
+        self.assertEqual(get_user_model().objects.filter(username="demo").count(), 1)
+        user = get_user_model().objects.get(username="demo")
+        # The reset keeps the demo account at exactly one document per type.
+        self.assertEqual(Document.objects.filter(user=user).count(), 4)
