@@ -1102,3 +1102,178 @@ class DocumentPreviewViewTest(TestCase):
             reverse("documents:document_preview", args=[other.pk])
         )
         self.assertEqual(response.status_code, 404)
+
+
+# --- M9: Dokumentenliste + Detail (Bearbeiten / Löschen) ---
+
+
+class DocumentEditViewTest(TestCase):
+    """``document_edit`` routes a stored document to its type's mask and saves
+    changes back in place — never as a new document — and stays owner-scoped."""
+
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.sender = SenderProfileFactory(user=self.user)
+
+    def test_requires_login(self) -> None:
+        document = DocumentFactory(user=self.user, doc_type=Document.Type.INVOICE)
+        self.client.logout()
+        response = self.client.get(
+            reverse("documents:document_edit", args=[document.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_cannot_edit_another_users_document(self) -> None:
+        other = DocumentFactory(doc_type=Document.Type.INVOICE)
+        response = self.client.get(
+            reverse("documents:document_edit", args=[other.pk])
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_get_invoice_edit_prefills_existing_values(self) -> None:
+        document = DocumentFactory(
+            user=self.user, sender=self.sender,
+            doc_type=Document.Type.INVOICE, number="2026-0007",
+        )
+        DocumentItemFactory(document=document, description="Altposten")
+        response = self.client.get(
+            reverse("documents:document_edit", args=[document.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_edit"])
+        self.assertContains(response, "2026-0007")
+        self.assertContains(response, "Altposten")
+
+    def test_edit_dispatches_by_type(self) -> None:
+        # A contract document must reach the contract mask, not the invoice one.
+        document = DocumentFactory(
+            user=self.user, sender=self.sender,
+            doc_type=Document.Type.CONTRACT, number="2026-0099",
+        )
+        DocumentClauseFactory(document=document, heading="Vertragsgegenstand")
+        response = self.client.get(
+            reverse("documents:document_edit", args=[document.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "documents/contract_form.html")
+
+    def test_post_updates_invoice_in_place(self) -> None:
+        document = DocumentFactory(
+            user=self.user, sender=self.sender,
+            doc_type=Document.Type.INVOICE, number="2026-0007",
+        )
+        item = DocumentItemFactory(
+            document=document, description="Alt", unit_price_cents=5000,
+        )
+        data = invoice_post_data(
+            self.sender, number="2026-0007", subject="Rechnung geändert",
+        )
+        data.update({
+            "items-INITIAL_FORMS": "1",
+            "items-0-id": str(item.pk),
+            "items-0-description": "Neu",
+            "items-0-unit_price_euro": "99.00",
+        })
+        response = self.client.post(
+            reverse("documents:document_edit", args=[document.pk]), data
+        )
+        self.assertRedirects(
+            response, reverse("documents:document_preview", args=[document.pk])
+        )
+        # No second document was created — the same row was updated.
+        self.assertEqual(Document.objects.filter(user=self.user).count(), 1)
+        document.refresh_from_db()
+        self.assertEqual(document.subject, "Rechnung geändert")
+        self.assertEqual(document.items.count(), 1)
+        item.refresh_from_db()
+        self.assertEqual(item.description, "Neu")
+        self.assertEqual(item.unit_price_cents, 9900)
+
+    def test_post_can_add_a_position_when_editing(self) -> None:
+        document = DocumentFactory(
+            user=self.user, sender=self.sender,
+            doc_type=Document.Type.INVOICE, number="2026-0007",
+        )
+        item = DocumentItemFactory(document=document, description="Erste")
+        data = invoice_post_data(self.sender, number="2026-0007")
+        data.update({
+            "items-TOTAL_FORMS": "2",
+            "items-INITIAL_FORMS": "1",
+            "items-0-id": str(item.pk),
+            "items-0-description": "Erste",
+            "items-0-unit_price_euro": "50.00",
+            "items-1-id": "",
+            "items-1-description": "Zweite",
+            "items-1-quantity": "1",
+            "items-1-unit": "Stk",
+            "items-1-unit_price_euro": "20.00",
+            "items-1-vat_rate": "0.19",
+            "items-1-DELETE": "",
+        })
+        self.client.post(
+            reverse("documents:document_edit", args=[document.pk]), data
+        )
+        self.assertEqual(document.items.count(), 2)
+        positions = sorted(document.items.values_list("position", flat=True))
+        self.assertEqual(positions, [1, 2])
+
+    def test_post_updates_reminder_in_place(self) -> None:
+        document = DocumentFactory(
+            user=self.user, sender=self.sender,
+            doc_type=Document.Type.REMINDER, number="2026-0123",
+            ref_amount_cents=119000, reminder_fee_cents=500,
+        )
+        data = reminder_post_data(
+            self.sender, number="2026-0123",
+            amount_euro="500.00", fee_euro="10.00",
+        )
+        response = self.client.post(
+            reverse("documents:document_edit", args=[document.pk]), data
+        )
+        self.assertRedirects(
+            response, reverse("documents:document_preview", args=[document.pk])
+        )
+        document.refresh_from_db()
+        self.assertEqual(document.ref_amount_cents, 50000)
+        self.assertEqual(document.reminder_fee_cents, 1000)
+        self.assertEqual(Document.objects.filter(user=self.user).count(), 1)
+
+
+class DocumentDeleteViewTest(TestCase):
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.document = DocumentFactory(
+            user=self.user, doc_type=Document.Type.INVOICE, number="2026-0007"
+        )
+
+    def test_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(
+            reverse("documents:document_delete", args=[self.document.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_get_shows_confirmation_without_deleting(self) -> None:
+        response = self.client.get(
+            reverse("documents:document_delete", args=[self.document.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "2026-0007")
+        self.assertEqual(Document.objects.count(), 1)
+
+    def test_post_deletes_document(self) -> None:
+        response = self.client.post(
+            reverse("documents:document_delete", args=[self.document.pk])
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_cannot_delete_another_users_document(self) -> None:
+        other = DocumentFactory(doc_type=Document.Type.INVOICE)
+        response = self.client.post(
+            reverse("documents:document_delete", args=[other.pk])
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Document.objects.filter(pk=other.pk).exists())

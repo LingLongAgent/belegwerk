@@ -1,6 +1,6 @@
 {% extends "main.html" %}
-{% block title %}Neuer Vertrag · Belegwerk{% endblock %}
-{% block page_title %}Neuer Vertrag{% endblock %}
+{% block title %}{% if is_edit %}Vertrag bearbeiten{% else %}Neuer Vertrag{% endif %} · Belegwerk{% endblock %}
+{% block page_title %}{% if is_edit %}Vertrag bearbeiten{% else %}Neuer Vertrag{% endif %}{% endblock %}
 {% block page_sub %}<div class="page-sub">Parteien und Klauseln ausfüllen — Belegwerk nummeriert die Paragraphen (§ 1, § 2 …) selbst.</div>{% endblock %}
 {% block nav_new %}active{% endblock %}
 {% block content %}
@@ -63,7 +63,7 @@
   </div>
 
   <div style="display:flex;gap:10px">
-    <button class="btn btn-primary" type="submit">Vertrag speichern</button>
+    <button class="btn btn-primary" type="submit">{% if is_edit %}Änderungen speichern{% else %}Vertrag speichern{% endif %}</button>
     <a class="btn btn-ghost" href="{% url 'documents:choose_type' %}">Abbrechen</a>
   </div>
 

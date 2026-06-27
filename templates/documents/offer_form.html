@@ -1,6 +1,6 @@
 {% extends "main.html" %}
-{% block title %}Neues Angebot · Belegwerk{% endblock %}
-{% block page_title %}Neues Angebot{% endblock %}
+{% block title %}{% if is_edit %}Angebot bearbeiten{% else %}Neues Angebot{% endif %} · Belegwerk{% endblock %}
+{% block page_title %}{% if is_edit %}Angebot bearbeiten{% else %}Neues Angebot{% endif %}{% endblock %}
 {% block page_sub %}<div class="page-sub">Absender, Empfänger und Positionen ausfüllen — die Summen rechnet Belegwerk live mit.</div>{% endblock %}
 {% block nav_new %}active{% endblock %}
 {% block content %}
@@ -74,7 +74,7 @@
   </div>
 
   <div style="display:flex;gap:10px">
-    <button class="btn btn-primary" type="submit">Angebot speichern</button>
+    <button class="btn btn-primary" type="submit">{% if is_edit %}Änderungen speichern{% else %}Angebot speichern{% endif %}</button>
     <a class="btn btn-ghost" href="{% url 'documents:choose_type' %}">Abbrechen</a>
   </div>
 

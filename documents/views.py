@@ -1,8 +1,14 @@
-"""Views for documents: the type chooser and the recipient address book.
+"""Views for documents: the type chooser, the create/edit masks and the
+recipient address book.
 
-Every recipient view is scoped to ``request.user`` so one user can never see or
-touch another user's saved recipients — the same ownership rule the sender
-profiles follow. A recipient is always saved with its owner attached.
+Every view is scoped to ``request.user`` so one user can never see or touch
+another user's documents or saved recipients — the same ownership rule the
+sender profiles follow. A document or recipient is always saved with its owner
+attached.
+
+The four ``*_create`` views double as edit views: pass a ``pk`` and they bind to
+that existing document instead of a blank one. :func:`document_edit` is the
+single entry point that picks the right one from a stored document's type.
 """
 
 from __future__ import annotations
@@ -26,6 +32,52 @@ from .forms import (
 )
 from .models import Document, Recipient
 
+
+def _save_positioned_children(formset, document: Document) -> None:
+    """Persist an inline formset's rows, numbered 1..n in their on-screen order.
+
+    Shared by the invoice/offer positions and the contract clauses. Renumbering
+    *every* surviving row — not only the ones the user changed — keeps the order
+    a clean, gap-free sequence when a document is edited later, not just when it
+    is first created.
+    """
+    formset.instance = document
+    formset.save(commit=False)
+    for deleted in formset.deleted_objects:
+        deleted.delete()
+    position = 0
+    for form in formset.forms:
+        if form in formset.deleted_forms:
+            continue
+        if not getattr(form, "cleaned_data", None):
+            continue
+        position += 1
+        form.instance.position = position
+        form.instance.save()
+
+
+def _document_for_edit(request: HttpRequest, pk: int | None) -> Document | None:
+    """Return the owner's document to edit, or ``None`` for a fresh create form."""
+    if pk is None:
+        return None
+    return get_object_or_404(Document, pk=pk, user=request.user)
+
+
+def _new_document_initial(request: HttpRequest) -> dict[str, object]:
+    """Sensible starting values for a blank document form.
+
+    Pre-fills today's date and, when ``?recipient=<id>`` points at one of the
+    user's address-book entries, that recipient's fields — so the mask arrives
+    filled where it sensibly can be.
+    """
+    initial: dict[str, object] = {"date": datetime.date.today()}
+    recipient_id = request.GET.get("recipient")
+    if recipient_id:
+        recipient = get_object_or_404(Recipient, pk=recipient_id, user=request.user)
+        initial.update(recipient.as_document_initial())
+    return initial
+
+
 DOC_TYPES = [
     {"key": "rechnung", "name": "Rechnung", "desc": "Positionen, USt, Summen, Zahlungsziel.",
      "url_name": "documents:invoice_create"},
@@ -45,146 +97,123 @@ def choose_type(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
-def invoice_create(request: HttpRequest) -> HttpResponse:
-    """Create a Rechnung: invoice fields plus a positions formset → saved Document.
+def invoice_create(request: HttpRequest, pk: int | None = None) -> HttpResponse:
+    """Create or edit a Rechnung: invoice fields plus a positions formset.
 
     A fresh form arrives pre-filled where it sensibly can be — today's date, the
     user's standard sender profile, and (via ``?recipient=<id>``) a chosen
-    address-book entry — so the user mostly fills in the positions. On success the
-    document and its positions are stored and the user lands on the PDF preview.
+    address-book entry — so the user mostly fills in the positions. With a ``pk``
+    it edits that existing document instead. On success the document and its
+    positions are stored and the user lands on the PDF preview.
     """
+    document = _document_for_edit(request, pk)
     if request.method == "POST":
-        form = InvoiceForm(request.POST, user=request.user)
-        formset = InvoiceItemFormSet(request.POST)
+        form = InvoiceForm(request.POST, user=request.user, instance=document)
+        formset = InvoiceItemFormSet(request.POST, instance=document)
         if form.is_valid() and formset.is_valid():
             document = form.save(commit=False)
             document.user = request.user
             document.doc_type = Document.Type.INVOICE
             document.save()
-            formset.instance = document
-            items = formset.save(commit=False)
-            for position, item in enumerate(items, start=1):
-                item.position = position
-                item.save()
-            for deleted in formset.deleted_objects:
-                deleted.delete()
+            _save_positioned_children(formset, document)
             messages.success(request, "Rechnung gespeichert.")
             return redirect("documents:document_preview", pk=document.pk)
+    elif document is not None:
+        form = InvoiceForm(user=request.user, instance=document)
+        formset = InvoiceItemFormSet(instance=document)
     else:
-        initial = {"date": datetime.date.today()}
-        recipient_id = request.GET.get("recipient")
-        if recipient_id:
-            recipient = get_object_or_404(
-                Recipient, pk=recipient_id, user=request.user
-            )
-            initial.update(recipient.as_document_initial())
-        form = InvoiceForm(user=request.user, initial=initial)
+        form = InvoiceForm(user=request.user, initial=_new_document_initial(request))
         formset = InvoiceItemFormSet()
     return render(
         request,
         "documents/invoice_form.html",
-        {"form": form, "formset": formset},
+        {"form": form, "formset": formset, "is_edit": document is not None},
     )
 
 
 @login_required
-def offer_create(request: HttpRequest) -> HttpResponse:
-    """Create an Angebot: offer fields plus a positions formset → saved Document.
+def offer_create(request: HttpRequest, pk: int | None = None) -> HttpResponse:
+    """Create or edit an Angebot: offer fields plus a positions formset.
 
     Mirrors :func:`invoice_create` — today's date, the standard sender and an
-    optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
-    document of type Angebot. The validity date carries py_doc's ``valid_until``;
-    on success the user lands on the PDF preview.
+    optional ``?recipient=<id>`` address-book entry are pre-filled, or a ``pk``
+    edits an existing document — but stores a document of type Angebot. The
+    validity date carries py_doc's ``valid_until``; on success the user lands on
+    the PDF preview.
     """
+    document = _document_for_edit(request, pk)
     if request.method == "POST":
-        form = OfferForm(request.POST, user=request.user)
-        formset = OfferItemFormSet(request.POST)
+        form = OfferForm(request.POST, user=request.user, instance=document)
+        formset = OfferItemFormSet(request.POST, instance=document)
         if form.is_valid() and formset.is_valid():
             document = form.save(commit=False)
             document.user = request.user
             document.doc_type = Document.Type.OFFER
             document.save()
-            formset.instance = document
-            items = formset.save(commit=False)
-            for position, item in enumerate(items, start=1):
-                item.position = position
-                item.save()
-            for deleted in formset.deleted_objects:
-                deleted.delete()
+            _save_positioned_children(formset, document)
             messages.success(request, "Angebot gespeichert.")
             return redirect("documents:document_preview", pk=document.pk)
+    elif document is not None:
+        form = OfferForm(user=request.user, instance=document)
+        formset = OfferItemFormSet(instance=document)
     else:
-        initial = {"date": datetime.date.today()}
-        recipient_id = request.GET.get("recipient")
-        if recipient_id:
-            recipient = get_object_or_404(
-                Recipient, pk=recipient_id, user=request.user
-            )
-            initial.update(recipient.as_document_initial())
-        form = OfferForm(user=request.user, initial=initial)
+        form = OfferForm(user=request.user, initial=_new_document_initial(request))
         formset = OfferItemFormSet()
     return render(
         request,
         "documents/offer_form.html",
-        {"form": form, "formset": formset},
+        {"form": form, "formset": formset, "is_edit": document is not None},
     )
 
 
 @login_required
-def contract_create(request: HttpRequest) -> HttpResponse:
-    """Create a Vertrag: contract fields plus a clauses formset → saved Document.
+def contract_create(request: HttpRequest, pk: int | None = None) -> HttpResponse:
+    """Create or edit a Vertrag: contract fields plus a clauses formset.
 
     Mirrors :func:`invoice_create` — today's date, the standard sender and an
-    optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
-    document of type Vertrag, where the sender and recipient are the two parties
-    and the formset holds the numbered §-clauses. On success the user lands on
-    the PDF preview.
+    optional ``?recipient=<id>`` address-book entry are pre-filled, or a ``pk``
+    edits an existing document — but stores a document of type Vertrag, where the
+    sender and recipient are the two parties and the formset holds the numbered
+    §-clauses. On success the user lands on the PDF preview.
     """
+    document = _document_for_edit(request, pk)
     if request.method == "POST":
-        form = ContractForm(request.POST, user=request.user)
-        formset = ContractClauseFormSet(request.POST)
+        form = ContractForm(request.POST, user=request.user, instance=document)
+        formset = ContractClauseFormSet(request.POST, instance=document)
         if form.is_valid() and formset.is_valid():
             document = form.save(commit=False)
             document.user = request.user
             document.doc_type = Document.Type.CONTRACT
             document.save()
-            formset.instance = document
-            clauses = formset.save(commit=False)
-            for position, clause in enumerate(clauses, start=1):
-                clause.position = position
-                clause.save()
-            for deleted in formset.deleted_objects:
-                deleted.delete()
+            _save_positioned_children(formset, document)
             messages.success(request, "Vertrag gespeichert.")
             return redirect("documents:document_preview", pk=document.pk)
+    elif document is not None:
+        form = ContractForm(user=request.user, instance=document)
+        formset = ContractClauseFormSet(instance=document)
     else:
-        initial = {"date": datetime.date.today()}
-        recipient_id = request.GET.get("recipient")
-        if recipient_id:
-            recipient = get_object_or_404(
-                Recipient, pk=recipient_id, user=request.user
-            )
-            initial.update(recipient.as_document_initial())
-        form = ContractForm(user=request.user, initial=initial)
+        form = ContractForm(user=request.user, initial=_new_document_initial(request))
         formset = ContractClauseFormSet()
     return render(
         request,
         "documents/contract_form.html",
-        {"form": form, "formset": formset},
+        {"form": form, "formset": formset, "is_edit": document is not None},
     )
 
 
 @login_required
-def reminder_create(request: HttpRequest) -> HttpResponse:
-    """Create a Zahlungserinnerung: reminder fields → saved Document.
+def reminder_create(request: HttpRequest, pk: int | None = None) -> HttpResponse:
+    """Create or edit a Zahlungserinnerung: reminder fields → saved Document.
 
     Mirrors :func:`invoice_create` — today's date, the standard sender and an
-    optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
-    document of type Zahlungserinnerung. A reminder has no positions, so it is a
-    flat form (no formset); on success the user lands on the PDF preview.
+    optional ``?recipient=<id>`` address-book entry are pre-filled, or a ``pk``
+    edits an existing document — but stores a document of type Zahlungserinnerung.
+    A reminder has no positions, so it is a flat form (no formset); on success
+    the user lands on the PDF preview.
     """
+    document = _document_for_edit(request, pk)
     if request.method == "POST":
-        form = ReminderForm(request.POST, user=request.user)
+        form = ReminderForm(request.POST, user=request.user, instance=document)
         if form.is_valid():
             document = form.save(commit=False)
             document.user = request.user
@@ -192,19 +221,14 @@ def reminder_create(request: HttpRequest) -> HttpResponse:
             document.save()
             messages.success(request, "Zahlungserinnerung gespeichert.")
             return redirect("documents:document_preview", pk=document.pk)
+    elif document is not None:
+        form = ReminderForm(user=request.user, instance=document)
     else:
-        initial = {"date": datetime.date.today()}
-        recipient_id = request.GET.get("recipient")
-        if recipient_id:
-            recipient = get_object_or_404(
-                Recipient, pk=recipient_id, user=request.user
-            )
-            initial.update(recipient.as_document_initial())
-        form = ReminderForm(user=request.user, initial=initial)
+        form = ReminderForm(user=request.user, initial=_new_document_initial(request))
     return render(
         request,
         "documents/reminder_form.html",
-        {"form": form},
+        {"form": form, "is_edit": document is not None},
     )
 
 
@@ -250,6 +274,39 @@ def document_preview(request: HttpRequest, pk: int) -> HttpResponse:
     return render(
         request,
         "documents/document_preview.html",
+        {"document": document},
+    )
+
+
+@login_required
+def document_edit(request: HttpRequest, pk: int) -> HttpResponse:
+    """Edit an existing document by routing to the create view for its type.
+
+    The four create masks already know how to bind to an existing document; this
+    view just looks at the stored type and hands off to the matching one, so the
+    detail page only needs a single „Bearbeiten" link regardless of document type.
+    """
+    document = get_object_or_404(Document, pk=pk, user=request.user)
+    edit_views = {
+        Document.Type.INVOICE: invoice_create,
+        Document.Type.OFFER: offer_create,
+        Document.Type.CONTRACT: contract_create,
+        Document.Type.REMINDER: reminder_create,
+    }
+    return edit_views[Document.Type(document.doc_type)](request, pk=pk)
+
+
+@login_required
+def document_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Delete one of the current user's documents after a confirmation step."""
+    document = get_object_or_404(Document, pk=pk, user=request.user)
+    if request.method == "POST":
+        document.delete()
+        messages.success(request, "Dokument gelöscht.")
+        return redirect("dashboard")
+    return render(
+        request,
+        "documents/document_confirm_delete.html",
         {"document": document},
     )
 

@@ -1,6 +1,6 @@
 {% extends "main.html" %}
-{% block title %}Neue Zahlungserinnerung · Belegwerk{% endblock %}
-{% block page_title %}Neue Zahlungserinnerung{% endblock %}
+{% block title %}{% if is_edit %}Zahlungserinnerung bearbeiten{% else %}Neue Zahlungserinnerung{% endif %} · Belegwerk{% endblock %}
+{% block page_title %}{% if is_edit %}Zahlungserinnerung bearbeiten{% else %}Neue Zahlungserinnerung{% endif %}{% endblock %}
 {% block page_sub %}<div class="page-sub">An eine offene Rechnung erinnern — Bezug, Stufe und neue Frist ausfüllen.</div>{% endblock %}
 {% block nav_new %}active{% endblock %}
 {% block content %}
@@ -52,7 +52,7 @@
   </div>
 
   <div style="display:flex;gap:10px">
-    <button class="btn btn-primary" type="submit">Zahlungserinnerung speichern</button>
+    <button class="btn btn-primary" type="submit">{% if is_edit %}Änderungen speichern{% else %}Zahlungserinnerung speichern{% endif %}</button>
     <a class="btn btn-ghost" href="{% url 'documents:choose_type' %}">Abbrechen</a>
   </div>
 </form>

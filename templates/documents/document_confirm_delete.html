@@ -1,0 +1,13 @@
+{% extends "main.html" %}
+{% block title %}Dokument löschen · Belegwerk{% endblock %}
+{% block page_title %}Dokument löschen{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block content %}
+<div class="card card-pad">
+  <p>Soll das Dokument <b>{{ document.get_doc_type_display }} {{ document.number }}</b> wirklich gelöscht werden? Das lässt sich nicht rückgängig machen.</p>
+  <form method="post" style="display:flex;gap:10px;margin-top:14px">{% csrf_token %}
+    <button class="btn btn-danger" type="submit">Endgültig löschen</button>
+    <a class="btn btn-ghost" href="{% url 'documents:document_preview' document.pk %}">Abbrechen</a>
+  </form>
+</div>
+{% endblock %}

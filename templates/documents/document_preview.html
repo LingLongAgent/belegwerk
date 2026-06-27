@@ -4,15 +4,18 @@
 {% block page_sub %}<div class="page-sub">Fertig als DIN-5008-A-PDF — unten die Vorschau, rechts der Download.</div>{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
 {% block topbar_actions %}
+<a class="btn btn-ghost btn-sm" href="{% url 'documents:document_edit' document.pk %}">Bearbeiten</a>
 <a class="btn btn-primary btn-sm" href="{% url 'documents:document_pdf' document.pk %}?download=1">PDF herunterladen</a>
 {% endblock %}
 {% block content %}
 <div class="card card-pad">
   <iframe src="{% url 'documents:document_pdf' document.pk %}" title="PDF-Vorschau"
           style="width:100%;height:75vh;border:1px solid var(--border,#e2e8f0);border-radius:8px;background:#fff"></iframe>
-  <div style="margin-top:16px;display:flex;gap:10px">
+  <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
     <a class="btn btn-primary" href="{% url 'documents:document_pdf' document.pk %}?download=1">PDF herunterladen</a>
+    <a class="btn btn-ghost" href="{% url 'documents:document_edit' document.pk %}">Bearbeiten</a>
     <a class="btn btn-ghost" href="{% url 'dashboard' %}">Zur Übersicht</a>
+    <a class="btn btn-danger" href="{% url 'documents:document_delete' document.pk %}">Löschen</a>
   </div>
 </div>
 {% endblock %}

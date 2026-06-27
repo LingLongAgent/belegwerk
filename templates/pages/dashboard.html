@@ -1,9 +1,40 @@
 {% extends "main.html" %}
 {% block title %}Übersicht · Belegwerk{% endblock %}
 {% block page_title %}Übersicht{% endblock %}
+{% block page_sub %}<div class="page-sub">Alle erstellten Dokumente — ansehen, herunterladen, bearbeiten.</div>{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
 {% block topbar_actions %}<a class="btn btn-primary btn-sm" href="{% url 'documents:choose_type' %}">+ Neues Dokument</a>{% endblock %}
 {% block content %}
-<div class="card card-pad"><p class="muted">Noch keine Dokumente erstellt. Lege dein erstes DIN-5008-A-Dokument an.</p>
-<a class="btn btn-primary" style="margin-top:12px" href="{% url 'documents:choose_type' %}">Dokument erstellen</a></div>
+{% if documents %}
+<div class="card">
+  <table class="tbl">
+    <thead><tr><th>Typ</th><th>Nummer</th><th>Datum</th><th>Empfänger</th><th></th></tr></thead>
+    <tbody>
+      {% for d in documents %}
+      <tr>
+        <td>
+          {% if d.doc_type == "invoice" %}<span class="badge badge-info"><span class="dot"></span>Rechnung</span>
+          {% elif d.doc_type == "offer" %}<span class="badge badge-ok"><span class="dot"></span>Angebot</span>
+          {% elif d.doc_type == "contract" %}<span class="badge badge-muted"><span class="dot"></span>Vertrag</span>
+          {% else %}<span class="badge badge-warn"><span class="dot"></span>Zahlungserinnerung</span>{% endif %}
+        </td>
+        <td><b><a href="{% url 'documents:document_preview' d.pk %}">{{ d.number }}</a></b></td>
+        <td>{{ d.date|date:"d.m.Y" }}</td>
+        <td>{{ d.recipient_company|default:d.recipient_name }}</td>
+        <td class="num">
+          <a class="btn btn-ghost btn-sm" href="{% url 'documents:document_preview' d.pk %}">Ansehen</a>
+          <a class="btn btn-ghost btn-sm" href="{% url 'documents:document_pdf' d.pk %}?download=1">PDF</a>
+          <a class="btn btn-ghost btn-sm" href="{% url 'documents:document_edit' d.pk %}">Bearbeiten</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card card-pad"><div class="empty">
+  <p>Noch keine Dokumente erstellt. Lege dein erstes DIN-5008-A-Dokument an.</p>
+  <a class="btn btn-primary" style="margin-top:12px" href="{% url 'documents:choose_type' %}">Dokument erstellen</a>
+</div></div>
+{% endif %}
 {% endblock %}

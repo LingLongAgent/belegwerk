@@ -15,6 +15,12 @@ urlpatterns = [
     ),
     path("dokument/<int:pk>/", views.document_preview, name="document_preview"),
     path("dokument/<int:pk>/pdf/", views.document_pdf, name="document_pdf"),
+    path("dokument/<int:pk>/bearbeiten/", views.document_edit, name="document_edit"),
+    path(
+        "dokument/<int:pk>/loeschen/",
+        views.document_delete,
+        name="document_delete",
+    ),
     path("empfaenger/", views.recipient_list, name="recipient_list"),
     path("empfaenger/neu/", views.recipient_create, name="recipient_create"),
     path("empfaenger/<int:pk>/", views.recipient_edit, name="recipient_edit"),
