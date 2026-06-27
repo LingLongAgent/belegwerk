@@ -1,0 +1,63 @@
+{% extends "main.html" %}
+{% block title %}{% if is_edit %}Profil bearbeiten{% else %}Neues Profil{% endif %} · Belegwerk{% endblock %}
+{% block page_title %}{% if is_edit %}Absender-Profil bearbeiten{% else %}Neues Absender-Profil{% endif %}{% endblock %}
+{% block page_sub %}<div class="page-sub">Diese Angaben erscheinen als Absender auf deinen DIN-5008-A-Dokumenten.</div>{% endblock %}
+{% block nav_sender %}active{% endblock %}
+{% block content %}
+<form method="post">{% csrf_token %}
+  {% if form.non_field_errors %}<div class="field-error">{{ form.non_field_errors }}</div>{% endif %}
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Profil</h2></div>
+    {% include "accounts/_field.html" with field=form.label %}
+    {% include "accounts/_field.html" with field=form.is_default %}
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Identität &amp; Anschrift</h2></div>
+    {% include "accounts/_field.html" with field=form.name %}
+    {% include "accounts/_field.html" with field=form.company %}
+    {% include "accounts/_field.html" with field=form.street %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.postal_code %}
+      {% include "accounts/_field.html" with field=form.city %}
+    </div>
+    {% include "accounts/_field.html" with field=form.country %}
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Kontakt</h2></div>
+    {% include "accounts/_field.html" with field=form.contact %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.email %}
+      {% include "accounts/_field.html" with field=form.phone %}
+    </div>
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Bankverbindung</h2></div>
+    {% include "accounts/_field.html" with field=form.bank_name %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.iban %}
+      {% include "accounts/_field.html" with field=form.bic %}
+    </div>
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Steuer &amp; Register</h2></div>
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.tax_number %}
+      {% include "accounts/_field.html" with field=form.vat_id %}
+    </div>
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.register_court %}
+      {% include "accounts/_field.html" with field=form.register_number %}
+    </div>
+  </div>
+
+  <div style="display:flex;gap:10px">
+    <button class="btn btn-primary" type="submit">{% if is_edit %}Änderungen speichern{% else %}Profil speichern{% endif %}</button>
+    <a class="btn btn-ghost" href="{% url 'profile_list' %}">Abbrechen</a>
+  </div>
+</form>
+{% endblock %}

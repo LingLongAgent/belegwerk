@@ -1,0 +1,13 @@
+{% extends "main.html" %}
+{% block title %}Profil löschen · Belegwerk{% endblock %}
+{% block page_title %}Absender-Profil löschen{% endblock %}
+{% block nav_sender %}active{% endblock %}
+{% block content %}
+<div class="card card-pad">
+  <p>Soll das Profil <b>{{ profile.label }}</b> wirklich gelöscht werden? Das lässt sich nicht rückgängig machen.</p>
+  <form method="post" style="display:flex;gap:10px;margin-top:14px">{% csrf_token %}
+    <button class="btn btn-danger" type="submit">Endgültig löschen</button>
+    <a class="btn btn-ghost" href="{% url 'profile_list' %}">Abbrechen</a>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,7 @@
+{# Render one bound form field with label, widget, hint and errors (design.css .field). #}
+<div class="field">
+  <label class="field-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+  {{ field }}
+  {% if field.help_text %}<div class="field-hint">{{ field.help_text }}</div>{% endif %}
+  {% for e in field.errors %}<div class="field-error">{{ e }}</div>{% endfor %}
+</div>
