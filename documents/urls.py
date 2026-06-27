@@ -13,6 +13,8 @@ urlpatterns = [
         views.reminder_create,
         name="reminder_create",
     ),
+    path("dokument/<int:pk>/", views.document_preview, name="document_preview"),
+    path("dokument/<int:pk>/pdf/", views.document_pdf, name="document_pdf"),
     path("empfaenger/", views.recipient_list, name="recipient_list"),
     path("empfaenger/neu/", views.recipient_create, name="recipient_create"),
     path("empfaenger/<int:pk>/", views.recipient_edit, name="recipient_edit"),

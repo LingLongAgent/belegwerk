@@ -51,7 +51,7 @@ def invoice_create(request: HttpRequest) -> HttpResponse:
     A fresh form arrives pre-filled where it sensibly can be — today's date, the
     user's standard sender profile, and (via ``?recipient=<id>``) a chosen
     address-book entry — so the user mostly fills in the positions. On success the
-    document and its positions are stored; the PDF preview/download follows in M8.
+    document and its positions are stored and the user lands on the PDF preview.
     """
     if request.method == "POST":
         form = InvoiceForm(request.POST, user=request.user)
@@ -69,7 +69,7 @@ def invoice_create(request: HttpRequest) -> HttpResponse:
             for deleted in formset.deleted_objects:
                 deleted.delete()
             messages.success(request, "Rechnung gespeichert.")
-            return redirect("dashboard")
+            return redirect("documents:document_preview", pk=document.pk)
     else:
         initial = {"date": datetime.date.today()}
         recipient_id = request.GET.get("recipient")
@@ -94,7 +94,7 @@ def offer_create(request: HttpRequest) -> HttpResponse:
     Mirrors :func:`invoice_create` — today's date, the standard sender and an
     optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
     document of type Angebot. The validity date carries py_doc's ``valid_until``;
-    the PDF preview/download follows in M8.
+    on success the user lands on the PDF preview.
     """
     if request.method == "POST":
         form = OfferForm(request.POST, user=request.user)
@@ -112,7 +112,7 @@ def offer_create(request: HttpRequest) -> HttpResponse:
             for deleted in formset.deleted_objects:
                 deleted.delete()
             messages.success(request, "Angebot gespeichert.")
-            return redirect("dashboard")
+            return redirect("documents:document_preview", pk=document.pk)
     else:
         initial = {"date": datetime.date.today()}
         recipient_id = request.GET.get("recipient")
@@ -137,8 +137,8 @@ def contract_create(request: HttpRequest) -> HttpResponse:
     Mirrors :func:`invoice_create` — today's date, the standard sender and an
     optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
     document of type Vertrag, where the sender and recipient are the two parties
-    and the formset holds the numbered §-clauses. The PDF preview/download
-    follows in M8.
+    and the formset holds the numbered §-clauses. On success the user lands on
+    the PDF preview.
     """
     if request.method == "POST":
         form = ContractForm(request.POST, user=request.user)
@@ -156,7 +156,7 @@ def contract_create(request: HttpRequest) -> HttpResponse:
             for deleted in formset.deleted_objects:
                 deleted.delete()
             messages.success(request, "Vertrag gespeichert.")
-            return redirect("dashboard")
+            return redirect("documents:document_preview", pk=document.pk)
     else:
         initial = {"date": datetime.date.today()}
         recipient_id = request.GET.get("recipient")
@@ -181,7 +181,7 @@ def reminder_create(request: HttpRequest) -> HttpResponse:
     Mirrors :func:`invoice_create` — today's date, the standard sender and an
     optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
     document of type Zahlungserinnerung. A reminder has no positions, so it is a
-    flat form (no formset); the PDF preview/download follows in M8.
+    flat form (no formset); on success the user lands on the PDF preview.
     """
     if request.method == "POST":
         form = ReminderForm(request.POST, user=request.user)
@@ -191,7 +191,7 @@ def reminder_create(request: HttpRequest) -> HttpResponse:
             document.doc_type = Document.Type.REMINDER
             document.save()
             messages.success(request, "Zahlungserinnerung gespeichert.")
-            return redirect("dashboard")
+            return redirect("documents:document_preview", pk=document.pk)
     else:
         initial = {"date": datetime.date.today()}
         recipient_id = request.GET.get("recipient")
@@ -205,6 +205,52 @@ def reminder_create(request: HttpRequest) -> HttpResponse:
         request,
         "documents/reminder_form.html",
         {"form": form},
+    )
+
+
+def _pdf_filename(document: Document) -> str:
+    """Build a human-friendly download name like ``Rechnung_2026-0001.pdf``.
+
+    The document number may contain a slash (``2026/0001``), which is illegal in
+    a filename, so it is replaced; spaces become underscores so the name stays a
+    single token for browsers and shells.
+    """
+    label = document.get_doc_type_display()
+    safe_number = document.number.replace("/", "-").replace(" ", "_")
+    return f"{label}_{safe_number}.pdf"
+
+
+@login_required
+def document_pdf(request: HttpRequest, pk: int) -> HttpResponse:
+    """Stream a saved document as a DIN 5008 Form-A PDF.
+
+    The model already knows how to render itself (:meth:`Document.render_pdf`);
+    this view only wraps the bytes in an HTTP response scoped to the owner. By
+    default the PDF opens inline (so the preview page can embed it); ``?download=1``
+    forces a download with a sensible filename.
+    """
+    document = get_object_or_404(Document, pk=pk, user=request.user)
+    response = HttpResponse(document.render_pdf(), content_type="application/pdf")
+    disposition = "attachment" if request.GET.get("download") else "inline"
+    response["Content-Disposition"] = (
+        f'{disposition}; filename="{_pdf_filename(document)}"'
+    )
+    return response
+
+
+@login_required
+def document_preview(request: HttpRequest, pk: int) -> HttpResponse:
+    """Show a saved document's PDF inline with a download button.
+
+    Users land here straight after creating a document, so they immediately see
+    the finished Form-A page and can download it. The PDF itself is served by
+    :func:`document_pdf`; this page just embeds that URL.
+    """
+    document = get_object_or_404(Document, pk=pk, user=request.user)
+    return render(
+        request,
+        "documents/document_preview.html",
+        {"document": document},
     )
 
 

@@ -31,7 +31,7 @@ Nicht der Funktionsumfang entscheidet den MVP, sondern dass das Ausfüllen **sch
 - [x] M5 (#5) · Angebot-Formular — Positionen + Gültigkeit → py_doc Offer. Tests.
 - [x] M6 (#6) · Vertrag-Formular + Klauseln — Parteien + §-Klauseln-Formset → py_doc Contract. Tests.
 - [x] M7 (#7) · Zahlungserinnerung-Formular — Rechnungsbezug + Stufe + Gebühr + Frist → py_doc PaymentReminder. Tests.
-- [ ] M8 (#8) · PDF-Erzeugung + Vorschau/Download — View rendert gespeichertes Dokument via py_doc (Form A) → PDF-Stream + Inline-Vorschau. Tests (PDF-Bytes + Inhalt).
+- [x] M8 (#8) · PDF-Erzeugung + Vorschau/Download — View rendert gespeichertes Dokument via py_doc (Form A) → PDF-Stream + Inline-Vorschau. Tests (PDF-Bytes + Inhalt).
 - [ ] M9 (#9) · Dokumentenliste + Detail — Übersicht listet Dokumente (Typ/Datum/Empfänger); Detail mit erneutem Download/Bearbeiten. Tests.
 - [ ] M10 (#10) · Registrierung + Onboarding — Nutzer + erstes Absender-Profil geführt anlegen. Tests.
 - [ ] M11 (#11) · Politur & Produktionsreife — Validierung, Empty States, responsive, seed_demo, README. Finaler Durchgang.

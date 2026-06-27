@@ -426,8 +426,10 @@ class InvoiceCreateViewTest(TestCase):
             reverse("documents:invoice_create"),
             invoice_post_data(self.sender),
         )
-        self.assertRedirects(response, reverse("dashboard"))
         document = Document.objects.get(number="2026-0001")
+        self.assertRedirects(
+            response, reverse("documents:document_preview", args=[document.pk])
+        )
         self.assertEqual(document.user, self.user)
         self.assertEqual(document.doc_type, Document.Type.INVOICE)
         self.assertEqual(document.items.count(), 1)
@@ -576,8 +578,10 @@ class OfferCreateViewTest(TestCase):
             reverse("documents:offer_create"),
             offer_post_data(self.sender),
         )
-        self.assertRedirects(response, reverse("dashboard"))
         document = Document.objects.get(number="2026-0042")
+        self.assertRedirects(
+            response, reverse("documents:document_preview", args=[document.pk])
+        )
         self.assertEqual(document.user, self.user)
         self.assertEqual(document.doc_type, Document.Type.OFFER)
         self.assertEqual(document.valid_until, datetime.date(2026, 7, 31))
@@ -592,8 +596,11 @@ class OfferCreateViewTest(TestCase):
         data = offer_post_data(self.sender)
         data["valid_until"] = ""
         response = self.client.post(reverse("documents:offer_create"), data)
-        self.assertRedirects(response, reverse("dashboard"))
-        self.assertIsNone(Document.objects.get(number="2026-0042").valid_until)
+        document = Document.objects.get(number="2026-0042")
+        self.assertRedirects(
+            response, reverse("documents:document_preview", args=[document.pk])
+        )
+        self.assertIsNone(document.valid_until)
 
     def test_post_without_sender_is_rejected(self) -> None:
         data = offer_post_data(self.sender)
@@ -770,8 +777,10 @@ class ContractCreateViewTest(TestCase):
             reverse("documents:contract_create"),
             contract_post_data(self.sender),
         )
-        self.assertRedirects(response, reverse("dashboard"))
         document = Document.objects.get(number="2026-0099")
+        self.assertRedirects(
+            response, reverse("documents:document_preview", args=[document.pk])
+        )
         self.assertEqual(document.user, self.user)
         self.assertEqual(document.doc_type, Document.Type.CONTRACT)
         self.assertEqual(document.party_a_label, "Auftraggeber")
@@ -960,8 +969,10 @@ class ReminderCreateViewTest(TestCase):
             reverse("documents:reminder_create"),
             reminder_post_data(self.sender),
         )
-        self.assertRedirects(response, reverse("dashboard"))
         document = Document.objects.get(number="2026-0123")
+        self.assertRedirects(
+            response, reverse("documents:document_preview", args=[document.pk])
+        )
         self.assertEqual(document.user, self.user)
         self.assertEqual(document.doc_type, Document.Type.REMINDER)
         self.assertEqual(document.ref_invoice_number, "2026-0007")
@@ -991,3 +1002,103 @@ class ReminderCreateViewTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Document.objects.count(), 0)
+
+
+# --- M8: PDF-Stream + Inline-Vorschau eines gespeicherten Dokuments ---
+
+
+class DocumentPdfViewTest(TestCase):
+    """The view that streams a saved document as a Form-A PDF, scoped to its owner."""
+
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.document = DocumentFactory(
+            user=self.user,
+            doc_type=Document.Type.INVOICE,
+            number="2026-0007",
+            subject="Rechnung 2026-0007",
+            recipient_name="Erika Empfänger",
+        )
+        DocumentItemFactory(
+            document=self.document, description="Beratung",
+            quantity=Decimal("2"), unit="h", unit_price_cents=5000,
+            vat_rate=Decimal("0.19"),
+        )
+
+    def _url(self) -> str:
+        return reverse("documents:document_pdf", args=[self.document.pk])
+
+    def test_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 302)
+
+    def test_streams_pdf_inline_by_default(self) -> None:
+        response = self.client.get(self._url())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF-"))
+        self.assertIn("inline", response["Content-Disposition"])
+        self.assertIn("Rechnung_2026-0007.pdf", response["Content-Disposition"])
+
+    def test_download_flag_forces_attachment(self) -> None:
+        response = self.client.get(self._url() + "?download=1")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertIn("Rechnung_2026-0007.pdf", response["Content-Disposition"])
+
+    def test_pdf_carries_the_document_content(self) -> None:
+        import io
+
+        from pypdf import PdfReader
+
+        response = self.client.get(self._url())
+        text = "".join(
+            page.extract_text()
+            for page in PdfReader(io.BytesIO(response.content)).pages
+        )
+        self.assertIn("Erika Empfänger", text)
+        self.assertIn("Beratung", text)
+
+    def test_cannot_access_another_users_document(self) -> None:
+        other = DocumentFactory(doc_type=Document.Type.INVOICE)  # not self.user's
+        DocumentItemFactory(document=other)
+        response = self.client.get(
+            reverse("documents:document_pdf", args=[other.pk])
+        )
+        self.assertEqual(response.status_code, 404)
+
+
+class DocumentPreviewViewTest(TestCase):
+    """The page that embeds a saved document's PDF inline with a download button."""
+
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.document = DocumentFactory(
+            user=self.user, doc_type=Document.Type.INVOICE, number="2026-0007"
+        )
+
+    def test_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(
+            reverse("documents:document_preview", args=[self.document.pk])
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_shows_preview_with_pdf_and_download_links(self) -> None:
+        response = self.client.get(
+            reverse("documents:document_preview", args=[self.document.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        pdf_url = reverse("documents:document_pdf", args=[self.document.pk])
+        self.assertContains(response, pdf_url)
+        self.assertContains(response, pdf_url + "?download=1")
+
+    def test_cannot_preview_another_users_document(self) -> None:
+        other = DocumentFactory(doc_type=Document.Type.INVOICE)
+        response = self.client.get(
+            reverse("documents:document_preview", args=[other.pk])
+        )
+        self.assertEqual(response.status_code, 404)
