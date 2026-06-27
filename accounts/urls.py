@@ -10,6 +10,7 @@ urlpatterns = [
         name="login",
     ),
     path("abmelden/", auth_views.LogoutView.as_view(), name="logout"),
+    path("registrieren/", views.register, name="register"),
     path("absender/", views.profile_list, name="profile_list"),
     path("absender/neu/", views.profile_create, name="profile_create"),
     path("absender/<int:pk>/", views.profile_edit, name="profile_edit"),

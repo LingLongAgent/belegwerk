@@ -33,7 +33,7 @@ Nicht der Funktionsumfang entscheidet den MVP, sondern dass das Ausfüllen **sch
 - [x] M7 (#7) · Zahlungserinnerung-Formular — Rechnungsbezug + Stufe + Gebühr + Frist → py_doc PaymentReminder. Tests.
 - [x] M8 (#8) · PDF-Erzeugung + Vorschau/Download — View rendert gespeichertes Dokument via py_doc (Form A) → PDF-Stream + Inline-Vorschau. Tests (PDF-Bytes + Inhalt).
 - [x] M9 (#9) · Dokumentenliste + Detail — Übersicht listet Dokumente (Typ/Datum/Empfänger); Detail mit erneutem Download/Bearbeiten. Tests.
-- [ ] M10 (#10) · Registrierung + Onboarding — Nutzer + erstes Absender-Profil geführt anlegen. Tests.
+- [x] M10 (#10) · Registrierung + Onboarding — Nutzer + erstes Absender-Profil geführt anlegen. Tests.
 - [ ] M11 (#11) · Politur & Produktionsreife — Validierung, Empty States, responsive, seed_demo, README. Finaler Durchgang.
 
 ## Done-Log

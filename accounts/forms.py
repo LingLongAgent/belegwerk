@@ -7,8 +7,26 @@ is self-explaining even without DIN knowledge — the MVP's guiding principle.
 from __future__ import annotations
 
 from django import forms
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.models import User
 
 from .models import SenderProfile
+
+
+class RegistrationForm(UserCreationForm):
+    """Sign-up form for a new account — username plus a confirmed password.
+
+    Kept deliberately minimal: the very next onboarding step is the sender
+    profile, which carries the real contact details, so registration only asks
+    for the credentials needed to log in.
+    """
+
+    class Meta(UserCreationForm.Meta):
+        model = User
+        fields = ["username"]
+        widgets = {
+            "username": forms.TextInput(attrs={"placeholder": "Benutzername"}),
+        }
 
 
 class SenderProfileForm(forms.ModelForm):

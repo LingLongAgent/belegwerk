@@ -187,3 +187,56 @@ class SenderProfileViewTest(TestCase):
         response = self.client.post(reverse("profile_delete", args=[other.pk]))
         self.assertEqual(response.status_code, 404)
         self.assertTrue(SenderProfile.objects.filter(pk=other.pk).exists())
+
+
+class RegistrationViewTest(TestCase):
+    """M10 — sign-up plus the guided onboarding into the first sender profile."""
+
+    # A valid password the Django validators accept (long, not all-numeric).
+    VALID_PASSWORD = "belegwerk-2026!"
+
+    def _signup_payload(self, username: str = "neuling") -> dict[str, str]:
+        return {
+            "username": username,
+            "password1": self.VALID_PASSWORD,
+            "password2": self.VALID_PASSWORD,
+        }
+
+    def test_get_renders_form(self) -> None:
+        response = self.client.get(reverse("register"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Konto erstellen")
+        self.assertContains(response, 'name="username"')
+
+    def test_post_creates_user_and_logs_in(self) -> None:
+        response = self.client.post(reverse("register"), self._signup_payload())
+        # Guided onboarding: a fresh account lands on the profile form.
+        self.assertRedirects(response, reverse("profile_create"))
+        user = get_user_model().objects.get(username="neuling")
+        self.assertTrue(user.check_password(self.VALID_PASSWORD))
+        # The session is authenticated right after sign-up — no extra login step.
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
+
+    def test_onboarding_target_is_reachable_after_signup(self) -> None:
+        self.client.post(reverse("register"), self._signup_payload())
+        response = self.client.get(reverse("profile_create"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_password_mismatch_creates_no_user(self) -> None:
+        payload = self._signup_payload()
+        payload["password2"] = "etwas-anderes-9!"
+        response = self.client.post(reverse("register"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(get_user_model().objects.filter(username="neuling").exists())
+
+    def test_duplicate_username_is_rejected(self) -> None:
+        UserFactory(username="neuling")
+        before = get_user_model().objects.count()
+        response = self.client.post(reverse("register"), self._signup_payload())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(get_user_model().objects.count(), before)
+
+    def test_authenticated_user_is_redirected_away(self) -> None:
+        self.client.force_login(UserFactory())
+        response = self.client.get(reverse("register"))
+        self.assertRedirects(response, reverse("dashboard"))

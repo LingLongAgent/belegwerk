@@ -7,12 +7,39 @@ another user's profiles. A profile is always saved with its owner attached.
 from __future__ import annotations
 
 from django.contrib import messages
+from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
-from .forms import SenderProfileForm
+from .forms import RegistrationForm, SenderProfileForm
 from .models import SenderProfile
+
+
+def register(request: HttpRequest) -> HttpResponse:
+    """Create a new account, then guide the user straight into onboarding.
+
+    A fresh user has no sender profile yet, so after sign-up we log them in and
+    send them to the profile form (where the first profile is pre-marked as the
+    default). Already-authenticated users have no business here and are bounced
+    to the dashboard.
+    """
+    if request.user.is_authenticated:
+        return redirect("dashboard")
+    if request.method == "POST":
+        form = RegistrationForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            login(request, user)
+            messages.success(
+                request,
+                "Konto erstellt. Lege jetzt dein Absender-Profil an — "
+                "dann kannst du dein erstes Dokument erstellen.",
+            )
+            return redirect("profile_create")
+    else:
+        form = RegistrationForm()
+    return render(request, "accounts/register.html", {"form": form})
 
 
 @login_required
