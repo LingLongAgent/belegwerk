@@ -25,7 +25,7 @@ Nicht der Funktionsumfang entscheidet den MVP, sondern dass das Ausfüllen **sch
 ## Aufgaben
 - [x] M0 · Scaffold — Design, Auth, Übersicht + Typ-Auswahl, py_doc-Engine eingebunden. (Tests grün)
 - [x] M1 (#1) · Absender-Profil — Modell + Formular (Firma, Anschrift, Bank/IBAN/BIC, Steuer), pro Nutzer, wiederverwendet. Tests.
-- [ ] M2 (#2) · Dokument-Datenmodell — gespeichertes Document (Typ, Empfänger, Metadaten, Nutzer, erstellt); Abbildung auf py_doc-Eingaben. Tests.
+- [x] M2 (#2) · Dokument-Datenmodell — gespeichertes Document (Typ, Empfänger, Metadaten, Nutzer, erstellt); Abbildung auf py_doc-Eingaben. Tests.
 - [ ] M3 (#3) · Empfänger/Kunden — wiederverwendbare Empfänger (Adressbuch) oder inline je Dokument. Tests.
 - [ ] M4 (#4) · Rechnung-Formular + Positionen — Positions-Formset → py_doc Invoice → Form-A-PDF. Tests.
 - [ ] M5 (#5) · Angebot-Formular — Positionen + Gültigkeit → py_doc Offer. Tests.
