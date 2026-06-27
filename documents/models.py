@@ -132,3 +132,91 @@ class Document(models.Model):
                 ("Datum", formatted_date),
             ],
         )
+
+
+# The address fields a Recipient shares with a Document's inline recipient. Kept
+# in one place so the address book can copy an entry straight into a new document
+# without either side having to spell the field list out twice.
+RECIPIENT_ADDRESS_FIELDS = (
+    "name",
+    "company",
+    "street",
+    "postal_code",
+    "city",
+    "country",
+    "contact",
+    "email",
+    "phone",
+    "vat_id",
+)
+
+
+class Recipient(models.Model):
+    """A saved recipient (Empfänger/Kunde) in a user's address book.
+
+    Belegwerk stores each document's recipient inline (on :class:`Document`) so a
+    finished document never changes when an address is edited later. This model is
+    the convenience layer above that: a user enters a customer once and can copy
+    it into any new document. The address fields mirror :class:`Document`'s
+    ``recipient_*`` fields exactly, which lets :meth:`as_document_initial` hand a
+    document form ready-to-use initial values.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="recipients",
+    )
+
+    name = models.CharField("Name", max_length=200)
+    company = models.CharField("Firma", max_length=200, blank=True)
+    street = models.CharField("Straße & Hausnr.", max_length=200, blank=True)
+    postal_code = models.CharField("PLZ", max_length=20, blank=True)
+    city = models.CharField("Ort", max_length=120, blank=True)
+    country = models.CharField("Land", max_length=120, blank=True)
+    contact = models.CharField("Ansprechpartner", max_length=200, blank=True)
+    email = models.EmailField("E-Mail", blank=True)
+    phone = models.CharField("Telefon", max_length=60, blank=True)
+    vat_id = models.CharField("USt-IdNr.", max_length=40, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        # Company first when present, otherwise the person's name — the label a
+        # user scans the address book by.
+        ordering = ["company", "name"]
+
+    def __str__(self) -> str:
+        return self.company or self.name
+
+    def to_recipient(self) -> Party:
+        """Translate this address-book entry into a py_doc :class:`Party`.
+
+        Empty strings become ``None`` so py_doc omits absent address lines — the
+        same rule :meth:`Document.to_recipient` and the sender profile follow.
+        """
+        return Party(
+            name=self.name,
+            company=self.company or None,
+            street=self.street or None,
+            postal_code=self.postal_code or None,
+            city=self.city or None,
+            country=self.country or None,
+            contact=self.contact or None,
+            email=self.email or None,
+            phone=self.phone or None,
+            vat_id=self.vat_id or None,
+        )
+
+    def as_document_initial(self) -> dict[str, str]:
+        """Return this entry as ``recipient_*`` initial values for a document form.
+
+        M4+ document forms pre-fill their inline recipient section from a chosen
+        address-book entry; the keys match :class:`Document`'s field names so the
+        result can be passed straight to a form's ``initial``.
+        """
+        return {
+            f"recipient_{field}": getattr(self, field)
+            for field in RECIPIENT_ADDRESS_FIELDS
+        }

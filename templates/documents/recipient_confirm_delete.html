@@ -1,0 +1,13 @@
+{% extends "main.html" %}
+{% block title %}Empfänger löschen · Belegwerk{% endblock %}
+{% block page_title %}Empfänger löschen{% endblock %}
+{% block nav_recipient %}active{% endblock %}
+{% block content %}
+<div class="card card-pad">
+  <p>Soll der Empfänger <b>{{ recipient }}</b> wirklich aus dem Adressbuch gelöscht werden? Bereits erstellte Dokumente bleiben unverändert.</p>
+  <form method="post" style="display:flex;gap:10px;margin-top:14px">{% csrf_token %}
+    <button class="btn btn-danger" type="submit">Endgültig löschen</button>
+    <a class="btn btn-ghost" href="{% url 'documents:recipient_list' %}">Abbrechen</a>
+  </form>
+</div>
+{% endblock %}

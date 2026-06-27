@@ -1,0 +1,33 @@
+{% extends "main.html" %}
+{% block title %}Empfänger · Belegwerk{% endblock %}
+{% block page_title %}Empfänger{% endblock %}
+{% block page_sub %}<div class="page-sub">Dein Adressbuch — Kunden einmal anlegen, beim Dokument auswählen statt neu tippen.</div>{% endblock %}
+{% block nav_recipient %}active{% endblock %}
+{% block topbar_actions %}<a class="btn btn-primary btn-sm" href="{% url 'documents:recipient_create' %}">+ Neuer Empfänger</a>{% endblock %}
+{% block content %}
+{% if recipients %}
+<div class="card">
+  <table class="tbl">
+    <thead><tr><th>Empfänger</th><th>Firma</th><th>Ort</th><th></th></tr></thead>
+    <tbody>
+      {% for r in recipients %}
+      <tr>
+        <td><b><a href="{% url 'documents:recipient_edit' r.pk %}">{{ r.name }}</a></b>{% if r.email %}<br><span class="muted">{{ r.email }}</span>{% endif %}</td>
+        <td>{{ r.company|default:"—" }}</td>
+        <td>{{ r.city|default:"—" }}</td>
+        <td class="num">
+          <a class="btn btn-ghost btn-sm" href="{% url 'documents:recipient_edit' r.pk %}">Bearbeiten</a>
+          <a class="btn btn-ghost btn-sm" href="{% url 'documents:recipient_delete' r.pk %}">Löschen</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card card-pad"><div class="empty">
+  <p>Noch kein Empfänger im Adressbuch. Lege deine Kunden einmal an und wähle sie später beim Dokument aus.</p>
+  <a class="btn btn-primary" style="margin-top:12px" href="{% url 'documents:recipient_create' %}">Ersten Empfänger anlegen</a>
+</div></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "main.html" %}
+{% block title %}{% if is_edit %}Empfänger bearbeiten{% else %}Neuer Empfänger{% endif %} · Belegwerk{% endblock %}
+{% block page_title %}{% if is_edit %}Empfänger bearbeiten{% else %}Neuer Empfänger{% endif %}{% endblock %}
+{% block page_sub %}<div class="page-sub">Diese Angaben erscheinen als Empfänger im Anschriftenfeld deiner Dokumente.</div>{% endblock %}
+{% block nav_recipient %}active{% endblock %}
+{% block content %}
+<form method="post">{% csrf_token %}
+  {% if form.non_field_errors %}<div class="field-error">{{ form.non_field_errors }}</div>{% endif %}
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Identität &amp; Anschrift</h2></div>
+    {% include "accounts/_field.html" with field=form.name %}
+    {% include "accounts/_field.html" with field=form.company %}
+    {% include "accounts/_field.html" with field=form.street %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.postal_code %}
+      {% include "accounts/_field.html" with field=form.city %}
+    </div>
+    {% include "accounts/_field.html" with field=form.country %}
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Kontakt &amp; Steuer</h2></div>
+    {% include "accounts/_field.html" with field=form.contact %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.email %}
+      {% include "accounts/_field.html" with field=form.phone %}
+    </div>
+    {% include "accounts/_field.html" with field=form.vat_id %}
+  </div>
+
+  <div style="display:flex;gap:10px">
+    <button class="btn btn-primary" type="submit">{% if is_edit %}Änderungen speichern{% else %}Empfänger speichern{% endif %}</button>
+    <a class="btn btn-ghost" href="{% url 'documents:recipient_list' %}">Abbrechen</a>
+  </div>
+</form>
+{% endblock %}

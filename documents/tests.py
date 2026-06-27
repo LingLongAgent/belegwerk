@@ -12,11 +12,12 @@ import datetime
 
 import factory
 from django.test import TestCase
+from django.urls import reverse
 from py_doc import DocumentMeta, Party
 
 from accounts.tests import SenderProfileFactory, UserFactory
 
-from .models import Document
+from .models import Document, Recipient
 
 
 class DocumentFactory(factory.django.DjangoModelFactory):
@@ -109,3 +110,143 @@ class DocumentRecordTest(TestCase):
         document = DocumentFactory()
         with self.assertRaises(ProtectedError):
             document.sender.delete()
+
+
+class RecipientFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = Recipient
+
+    user = factory.SubFactory(UserFactory)
+    name = factory.Faker("name", locale="de_DE")
+    company = factory.Faker("company", locale="de_DE")
+    city = factory.Faker("city", locale="de_DE")
+
+
+# Posting the recipient form needs every optional field present (empty), since a
+# ModelForm omits nothing — mirrors the accounts EMPTY_OPTIONAL_FIELDS helper.
+EMPTY_RECIPIENT_FIELDS = {
+    "company": "",
+    "street": "",
+    "postal_code": "",
+    "city": "",
+    "country": "",
+    "contact": "",
+    "email": "",
+    "phone": "",
+    "vat_id": "",
+}
+
+
+class RecipientModelTest(TestCase):
+    def test_to_recipient_maps_all_fields(self) -> None:
+        recipient = RecipientFactory(
+            name="Erika Beispiel",
+            company="Beispiel AG",
+            street="Beispielweg 7",
+            postal_code="20095",
+            city="Hamburg",
+            vat_id="DE987654321",
+        )
+        party = recipient.to_recipient()
+        self.assertIsInstance(party, Party)
+        self.assertEqual(party.name, "Erika Beispiel")
+        self.assertEqual(party.company, "Beispiel AG")
+        self.assertEqual(party.vat_id, "DE987654321")
+        address = party.address_lines()
+        self.assertIn("Beispiel AG", address)
+        self.assertIn("20095 Hamburg", address)
+
+    def test_to_recipient_turns_blanks_into_none(self) -> None:
+        recipient = RecipientFactory(name="Max Ohnefirma", company="", city="")
+        party = recipient.to_recipient()
+        self.assertIsNone(party.company)
+        self.assertIsNone(party.city)
+
+    def test_as_document_initial_uses_recipient_prefixed_keys(self) -> None:
+        recipient = RecipientFactory(
+            name="Erika Beispiel", company="Beispiel AG", city="Hamburg"
+        )
+        initial = recipient.as_document_initial()
+        self.assertEqual(initial["recipient_name"], "Erika Beispiel")
+        self.assertEqual(initial["recipient_company"], "Beispiel AG")
+        self.assertEqual(initial["recipient_city"], "Hamburg")
+        # The keys must line up exactly with the Document fields they pre-fill.
+        for key in initial:
+            self.assertTrue(hasattr(Document, key))
+
+    def test_str_prefers_company_then_name(self) -> None:
+        self.assertEqual(str(RecipientFactory(company="Beispiel AG")), "Beispiel AG")
+        self.assertEqual(
+            str(RecipientFactory(name="Max Privat", company="")), "Max Privat"
+        )
+
+
+class RecipientViewTest(TestCase):
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+
+    def test_list_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("documents:recipient_list"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_list_shows_only_own_recipients(self) -> None:
+        mine = RecipientFactory(user=self.user, name="Meiner")
+        RecipientFactory(name="Fremder")  # belongs to another user
+        response = self.client.get(reverse("documents:recipient_list"))
+        self.assertContains(response, "Meiner")
+        self.assertNotContains(response, "Fremder")
+        self.assertEqual(list(response.context["recipients"]), [mine])
+
+    def test_create_attaches_owner(self) -> None:
+        response = self.client.post(
+            reverse("documents:recipient_create"),
+            {"name": "Erika Beispiel", **EMPTY_RECIPIENT_FIELDS, "company": "Beispiel AG"},
+        )
+        self.assertRedirects(response, reverse("documents:recipient_list"))
+        recipient = Recipient.objects.get(name="Erika Beispiel")
+        self.assertEqual(recipient.user, self.user)
+        self.assertEqual(recipient.company, "Beispiel AG")
+
+    def test_create_rejects_missing_name(self) -> None:
+        response = self.client.post(
+            reverse("documents:recipient_create"), {"name": "", **EMPTY_RECIPIENT_FIELDS}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Recipient.objects.count(), 0)
+        self.assertContains(response, "field-error")
+
+    def test_edit_updates_recipient(self) -> None:
+        recipient = RecipientFactory(user=self.user, name="Alt", company="")
+        response = self.client.post(
+            reverse("documents:recipient_edit", args=[recipient.pk]),
+            {"name": "Neu", **EMPTY_RECIPIENT_FIELDS, "city": "Bremen"},
+        )
+        self.assertRedirects(response, reverse("documents:recipient_list"))
+        recipient.refresh_from_db()
+        self.assertEqual(recipient.name, "Neu")
+        self.assertEqual(recipient.city, "Bremen")
+
+    def test_cannot_edit_other_users_recipient(self) -> None:
+        other = RecipientFactory(name="Fremd")
+        response = self.client.get(
+            reverse("documents:recipient_edit", args=[other.pk])
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_delete_removes_recipient(self) -> None:
+        recipient = RecipientFactory(user=self.user)
+        response = self.client.post(
+            reverse("documents:recipient_delete", args=[recipient.pk])
+        )
+        self.assertRedirects(response, reverse("documents:recipient_list"))
+        self.assertFalse(Recipient.objects.filter(pk=recipient.pk).exists())
+
+    def test_cannot_delete_other_users_recipient(self) -> None:
+        other = RecipientFactory()
+        response = self.client.post(
+            reverse("documents:recipient_delete", args=[other.pk])
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(Recipient.objects.filter(pk=other.pk).exists())

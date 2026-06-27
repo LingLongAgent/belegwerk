@@ -13,6 +13,7 @@
     <a class="nav-item {% block nav_new %}{% endblock %}" href="{% url 'documents:choose_type' %}"><span>Neues Dokument</span></a>
     <div class="nav-group-label">Einstellungen</div>
     <a class="nav-item {% block nav_sender %}{% endblock %}" href="{% url 'profile_list' %}"><span>Absender-Profile</span></a>
+    <a class="nav-item {% block nav_recipient %}{% endblock %}" href="{% url 'documents:recipient_list' %}"><span>Empfänger</span></a>
     <div class="nav-spacer"></div>
     <div class="sidebar-foot">
       <form method="post" action="{% url 'logout' %}">{% csrf_token %}
