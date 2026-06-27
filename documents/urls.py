@@ -6,6 +6,7 @@ app_name = "documents"
 urlpatterns = [
     path("neu/", views.choose_type, name="choose_type"),
     path("neu/rechnung/", views.invoice_create, name="invoice_create"),
+    path("neu/angebot/", views.offer_create, name="offer_create"),
     path("empfaenger/", views.recipient_list, name="recipient_list"),
     path("empfaenger/neu/", views.recipient_create, name="recipient_create"),
     path("empfaenger/<int:pk>/", views.recipient_edit, name="recipient_edit"),

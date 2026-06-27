@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
-from py_doc import DocumentMeta, Form, Invoice, InvoiceItem, Party
+from py_doc import DocumentMeta, Form, Invoice, InvoiceItem, Offer, Party
 
 from accounts.models import SenderProfile
 
@@ -81,6 +81,13 @@ class Document(models.Model):
         max_length=300,
         default=DEFAULT_PAYMENT_TERMS,
         help_text="Steht unter der Summe, z. B. „Zahlbar innerhalb von 14 Tagen“.",
+    )
+    # Used by the offer as py_doc's valid_until line; left blank for other types.
+    valid_until = models.DateField(
+        "Gültig bis",
+        null=True,
+        blank=True,
+        help_text="Bis wann das Angebot gilt — erscheint unter den Positionen.",
     )
 
     # --- Empfänger (inline; py_doc Party) ---
@@ -164,15 +171,34 @@ class Document(models.Model):
             payment_terms=self.payment_terms or DEFAULT_PAYMENT_TERMS,
         )
 
+    def build_offer(self) -> Offer:
+        """Assemble the py_doc :class:`Offer` for this document.
+
+        Same shape as the invoice — sender, recipient, metadata and positions —
+        but with a validity line instead of payment terms. The optional
+        ``valid_until`` date is formatted to the German form py_doc prints
+        verbatim, or left blank when no date was given.
+        """
+        valid_until = self.valid_until.strftime("%d.%m.%Y") if self.valid_until else ""
+        return Offer(
+            sender=self.sender.to_sender(),
+            recipient=self.to_recipient(),
+            meta=self.to_meta(),
+            items=self.to_line_items(),
+            valid_until=valid_until,
+        )
+
     def render_pdf(self) -> bytes:
         """Render this document to a DIN 5008 **Form A** PDF (bytes).
 
-        Dispatches on the document type; the invoice is wired here in M4, the
-        remaining types follow in their own milestones. The app always renders
-        Form A, so the form choice is fixed.
+        Dispatches on the document type; the invoice (M4) and offer (M5) are
+        wired here, the remaining types follow in their own milestones. The app
+        always renders Form A, so the form choice is fixed.
         """
         if self.doc_type == self.Type.INVOICE:
             return self.build_invoice().render(Form.A)
+        if self.doc_type == self.Type.OFFER:
+            return self.build_offer().render(Form.A)
         raise NotImplementedError(
             f"PDF-Erzeugung für Typ {self.doc_type!r} folgt in einem späteren Schritt."
         )

@@ -449,3 +449,162 @@ class InvoiceCreateViewTest(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Document.objects.count(), 0)
+
+
+# --- M5: Angebot — Positionen, Gültigkeit und py_doc-Offer (Form A) ---
+
+
+class OfferBuildTest(TestCase):
+    """The mapping from a saved document to a py_doc Offer, and its totals."""
+
+    def _offer_document(self, **overrides: object) -> Document:
+        fields: dict[str, object] = {
+            "doc_type": Document.Type.OFFER,
+            "number": "2026-0042",
+            "subject": "Angebot 2026-0042",
+            "date": datetime.date(2026, 6, 24),
+            "valid_until": datetime.date(2026, 7, 31),
+            "recipient_name": "Erika Empfänger",
+            "recipient_city": "Hamburg",
+        }
+        fields.update(overrides)
+        document = DocumentFactory(**fields)
+        DocumentItemFactory(
+            document=document, description="Konzeption", quantity=Decimal("2"),
+            unit="h", unit_price_cents=5000, vat_rate=Decimal("0.19"),
+        )
+        DocumentItemFactory(
+            document=document, description="Lizenz", quantity=Decimal("1"),
+            unit="Stk", unit_price_cents=10000, vat_rate=Decimal("0.19"),
+        )
+        return document
+
+    def test_build_offer_totals(self) -> None:
+        offer = self._offer_document().build_offer()
+        totals = offer.totals()
+        # 2×50 € + 1×100 € = 200 € net, 19 % VAT → 238 € gross.
+        self.assertEqual(totals.net_cents, 20000)
+        self.assertEqual(totals.gross_cents, 23800)
+
+    def test_build_offer_formats_valid_until_as_german_date(self) -> None:
+        offer = self._offer_document().build_offer()
+        self.assertEqual(offer.valid_until, "31.07.2026")
+
+    def test_build_offer_leaves_valid_until_blank_when_unset(self) -> None:
+        offer = self._offer_document(valid_until=None).build_offer()
+        self.assertEqual(offer.valid_until, "")
+
+    def test_render_pdf_produces_form_a_pdf_with_content(self) -> None:
+        import io
+
+        from pypdf import PdfReader
+
+        pdf_bytes = self._offer_document().render_pdf()
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+        text = "".join(
+            page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages
+        )
+        # The recipient, a position, the subject and the validity date must reach
+        # the page.
+        self.assertIn("Erika Empfänger", text)
+        self.assertIn("Konzeption", text)
+        self.assertIn("Angebot 2026-0042", text)
+        self.assertIn("31.07.2026", text)
+
+
+def offer_post_data(sender: object, **overrides: str) -> dict[str, str]:
+    """Build a valid POST payload for the offer form + one position.
+
+    Mirrors :func:`invoice_post_data` but carries the offer's ``valid_until``
+    instead of payment terms.
+    """
+    data = {
+        "sender": str(sender.pk),
+        "number": "2026-0042",
+        "date": "2026-06-24",
+        "subject": "Angebot 2026-0042",
+        "valid_until": "2026-07-31",
+        "recipient_name": "Erika Empfänger",
+        "recipient_company": "", "recipient_street": "",
+        "recipient_postal_code": "", "recipient_city": "Hamburg",
+        "recipient_country": "", "recipient_contact": "",
+        "recipient_email": "", "recipient_phone": "", "recipient_vat_id": "",
+        "items-TOTAL_FORMS": "1", "items-INITIAL_FORMS": "0",
+        "items-MIN_NUM_FORMS": "0", "items-MAX_NUM_FORMS": "1000",
+        "items-0-id": "", "items-0-description": "Konzeption",
+        "items-0-quantity": "2", "items-0-unit": "h",
+        "items-0-unit_price_euro": "50.00", "items-0-vat_rate": "0.19",
+        "items-0-DELETE": "",
+    }
+    data.update(overrides)
+    return data
+
+
+class OfferCreateViewTest(TestCase):
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.sender = SenderProfileFactory(user=self.user)
+
+    def test_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("documents:offer_create"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_get_prefills_today_and_default_sender(self) -> None:
+        default = SenderProfileFactory(user=self.user, is_default=True)
+        response = self.client.get(reverse("documents:offer_create"))
+        self.assertEqual(response.status_code, 200)
+        form = response.context["form"]
+        self.assertEqual(form.initial["date"], datetime.date.today())
+        self.assertEqual(form.initial["sender"], default.pk)
+
+    def test_get_prefills_recipient_from_address_book(self) -> None:
+        recipient = RecipientFactory(
+            user=self.user, name="Aus Adressbuch", city="Bremen"
+        )
+        url = reverse("documents:offer_create") + f"?recipient={recipient.pk}"
+        response = self.client.get(url)
+        self.assertEqual(
+            response.context["form"].initial["recipient_name"], "Aus Adressbuch"
+        )
+
+    def test_post_creates_offer_with_positions_and_validity(self) -> None:
+        response = self.client.post(
+            reverse("documents:offer_create"),
+            offer_post_data(self.sender),
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        document = Document.objects.get(number="2026-0042")
+        self.assertEqual(document.user, self.user)
+        self.assertEqual(document.doc_type, Document.Type.OFFER)
+        self.assertEqual(document.valid_until, datetime.date(2026, 7, 31))
+        self.assertEqual(document.items.count(), 1)
+        item = document.items.get()
+        self.assertEqual(item.description, "Konzeption")
+        self.assertEqual(item.unit_price_cents, 5000)
+        self.assertEqual(item.position, 1)
+
+    def test_post_without_validity_is_allowed(self) -> None:
+        # The validity date is optional — an offer without one must still save.
+        data = offer_post_data(self.sender)
+        data["valid_until"] = ""
+        response = self.client.post(reverse("documents:offer_create"), data)
+        self.assertRedirects(response, reverse("dashboard"))
+        self.assertIsNone(Document.objects.get(number="2026-0042").valid_until)
+
+    def test_post_without_sender_is_rejected(self) -> None:
+        data = offer_post_data(self.sender)
+        data["sender"] = ""
+        response = self.client.post(reverse("documents:offer_create"), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_cannot_use_another_users_sender(self) -> None:
+        other_sender = SenderProfileFactory()  # not owned by self.user
+        response = self.client.post(
+            reverse("documents:offer_create"),
+            offer_post_data(other_sender),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)

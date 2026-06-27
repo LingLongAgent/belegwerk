@@ -14,13 +14,20 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
-from .forms import InvoiceForm, InvoiceItemFormSet, RecipientForm
+from .forms import (
+    InvoiceForm,
+    InvoiceItemFormSet,
+    OfferForm,
+    OfferItemFormSet,
+    RecipientForm,
+)
 from .models import Document, Recipient
 
 DOC_TYPES = [
     {"key": "rechnung", "name": "Rechnung", "desc": "Positionen, USt, Summen, Zahlungsziel.",
      "url_name": "documents:invoice_create"},
-    {"key": "angebot", "name": "Angebot", "desc": "Positionen und Gültigkeit."},
+    {"key": "angebot", "name": "Angebot", "desc": "Positionen und Gültigkeit.",
+     "url_name": "documents:offer_create"},
     {"key": "vertrag", "name": "Vertrag", "desc": "Parteien, §-Klauseln, Unterschriften."},
     {"key": "zahlungserinnerung", "name": "Zahlungserinnerung", "desc": "Bezug auf Rechnung, Frist."},
 ]
@@ -71,6 +78,49 @@ def invoice_create(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "documents/invoice_form.html",
+        {"form": form, "formset": formset},
+    )
+
+
+@login_required
+def offer_create(request: HttpRequest) -> HttpResponse:
+    """Create an Angebot: offer fields plus a positions formset → saved Document.
+
+    Mirrors :func:`invoice_create` — today's date, the standard sender and an
+    optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
+    document of type Angebot. The validity date carries py_doc's ``valid_until``;
+    the PDF preview/download follows in M8.
+    """
+    if request.method == "POST":
+        form = OfferForm(request.POST, user=request.user)
+        formset = OfferItemFormSet(request.POST)
+        if form.is_valid() and formset.is_valid():
+            document = form.save(commit=False)
+            document.user = request.user
+            document.doc_type = Document.Type.OFFER
+            document.save()
+            formset.instance = document
+            items = formset.save(commit=False)
+            for position, item in enumerate(items, start=1):
+                item.position = position
+                item.save()
+            for deleted in formset.deleted_objects:
+                deleted.delete()
+            messages.success(request, "Angebot gespeichert.")
+            return redirect("dashboard")
+    else:
+        initial = {"date": datetime.date.today()}
+        recipient_id = request.GET.get("recipient")
+        if recipient_id:
+            recipient = get_object_or_404(
+                Recipient, pk=recipient_id, user=request.user
+            )
+            initial.update(recipient.as_document_initial())
+        form = OfferForm(user=request.user, initial=initial)
+        formset = OfferItemFormSet()
+    return render(
+        request,
+        "documents/offer_form.html",
         {"form": form, "formset": formset},
     )
 

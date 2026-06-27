@@ -1,0 +1,136 @@
+{% extends "main.html" %}
+{% block title %}Neues Angebot · Belegwerk{% endblock %}
+{% block page_title %}Neues Angebot{% endblock %}
+{% block page_sub %}<div class="page-sub">Absender, Empfänger und Positionen ausfüllen — die Summen rechnet Belegwerk live mit.</div>{% endblock %}
+{% block nav_new %}active{% endblock %}
+{% block content %}
+<form method="post" id="offer-form">{% csrf_token %}
+  {% if form.non_field_errors %}<div class="field-error">{{ form.non_field_errors }}</div>{% endif %}
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Absender &amp; Eckdaten</h2></div>
+    {% include "accounts/_field.html" with field=form.sender %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.number %}
+      {% include "accounts/_field.html" with field=form.date %}
+    </div>
+    {% include "accounts/_field.html" with field=form.subject %}
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Empfänger</h2></div>
+    {% include "accounts/_field.html" with field=form.recipient_name %}
+    {% include "accounts/_field.html" with field=form.recipient_company %}
+    {% include "accounts/_field.html" with field=form.recipient_street %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.recipient_postal_code %}
+      {% include "accounts/_field.html" with field=form.recipient_city %}
+    </div>
+    {% include "accounts/_field.html" with field=form.recipient_country %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.recipient_contact %}
+      {% include "accounts/_field.html" with field=form.recipient_vat_id %}
+    </div>
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.recipient_email %}
+      {% include "accounts/_field.html" with field=form.recipient_phone %}
+    </div>
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Positionen</h2></div>
+    {{ formset.management_form }}
+    {% if formset.non_form_errors %}<div class="field-error">{{ formset.non_form_errors }}</div>{% endif %}
+    <table class="tbl" id="items-table">
+      <thead><tr>
+        <th>Beschreibung</th><th class="num">Menge</th><th>Einheit</th>
+        <th class="num">Einzelpreis&nbsp;(€)</th><th>USt</th><th></th>
+      </tr></thead>
+      <tbody id="items-body">
+        {% for item_form in formset %}
+        <tr class="item-row">
+          {{ item_form.id }}
+          <td>{{ item_form.description }}{% for e in item_form.description.errors %}<div class="field-error">{{ e }}</div>{% endfor %}</td>
+          <td class="num">{{ item_form.quantity }}</td>
+          <td>{{ item_form.unit }}</td>
+          <td class="num">{{ item_form.unit_price_euro }}{% for e in item_form.unit_price_euro.errors %}<div class="field-error">{{ e }}</div>{% endfor %}</td>
+          <td>{{ item_form.vat_rate }}</td>
+          <td>{% if formset.can_delete %}<label class="muted" style="font-size:12px">{{ item_form.DELETE }} entf.</label>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" type="button" id="add-row">+ Zeile hinzufügen</button>
+      <div class="muted" style="font-size:13px;text-align:right">
+        Netto: <b id="sum-net">0,00 €</b> · Brutto: <b id="sum-gross">0,00 €</b>
+      </div>
+    </div>
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Gültigkeit</h2></div>
+    {% include "accounts/_field.html" with field=form.valid_until %}
+  </div>
+
+  <div style="display:flex;gap:10px">
+    <button class="btn btn-primary" type="submit">Angebot speichern</button>
+    <a class="btn btn-ghost" href="{% url 'documents:choose_type' %}">Abbrechen</a>
+  </div>
+
+  {# Blank row blueprint for "+ Zeile hinzufügen"; __prefix__ is renumbered in JS. #}
+  <template id="empty-row">
+    <tr class="item-row">
+      {{ formset.empty_form.id }}
+      <td>{{ formset.empty_form.description }}</td>
+      <td class="num">{{ formset.empty_form.quantity }}</td>
+      <td>{{ formset.empty_form.unit }}</td>
+      <td class="num">{{ formset.empty_form.unit_price_euro }}</td>
+      <td>{{ formset.empty_form.vat_rate }}</td>
+      <td><label class="muted" style="font-size:12px">{{ formset.empty_form.DELETE }} entf.</label></td>
+    </tr>
+  </template>
+</form>
+
+<script>
+(function () {
+  const totalForms = document.getElementById("id_{{ formset.prefix }}-TOTAL_FORMS");
+  const body = document.getElementById("items-body");
+  const tmpl = document.getElementById("empty-row");
+
+  function euro(cents) {
+    return (cents / 100).toLocaleString("de-DE", {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " €";
+  }
+
+  function recalc() {
+    let net = 0, gross = 0;
+    body.querySelectorAll("tr.item-row").forEach(function (row) {
+      const del = row.querySelector('input[type="checkbox"]');
+      if (del && del.checked) return;
+      const qty = parseFloat((row.querySelector('input[name$="-quantity"]') || {}).value) || 0;
+      const price = parseFloat((row.querySelector('input[name$="-unit_price_euro"]') || {}).value) || 0;
+      const vat = parseFloat((row.querySelector('select[name$="-vat_rate"]') || {}).value) || 0;
+      const lineNet = Math.round(qty * price * 100);
+      net += lineNet;
+      gross += lineNet + Math.round(lineNet * vat);
+    });
+    document.getElementById("sum-net").textContent = euro(net);
+    document.getElementById("sum-gross").textContent = euro(gross);
+  }
+
+  document.getElementById("add-row").addEventListener("click", function () {
+    const index = parseInt(totalForms.value, 10);
+    const html = tmpl.innerHTML.replace(/__prefix__/g, index);
+    const tr = document.createElement("tbody");
+    tr.innerHTML = html.trim();
+    body.appendChild(tr.firstElementChild);
+    totalForms.value = index + 1;
+    recalc();
+  });
+
+  body.addEventListener("input", recalc);
+  body.addEventListener("change", recalc);
+  recalc();
+})();
+</script>
+{% endblock %}
