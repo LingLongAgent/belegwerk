@@ -19,7 +19,7 @@ from py_doc import DocumentMeta, Party
 from accounts.tests import SenderProfileFactory, UserFactory
 
 from .forms import DocumentItemForm
-from .models import Document, DocumentItem, Recipient
+from .models import Document, DocumentClause, DocumentItem, Recipient
 
 
 class DocumentFactory(factory.django.DjangoModelFactory):
@@ -328,7 +328,7 @@ class InvoiceBuildTest(TestCase):
         self.assertIn("Rechnung 2026-0007", text)
 
     def test_render_pdf_rejects_unimplemented_types(self) -> None:
-        document = DocumentFactory(doc_type=Document.Type.CONTRACT)
+        document = DocumentFactory(doc_type=Document.Type.REMINDER)
         with self.assertRaises(NotImplementedError):
             document.render_pdf()
 
@@ -605,6 +605,199 @@ class OfferCreateViewTest(TestCase):
         response = self.client.post(
             reverse("documents:offer_create"),
             offer_post_data(other_sender),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+
+# --- M6: Vertrag — Parteien, §-Klauseln und py_doc-Contract (Form A) ---
+
+
+class DocumentClauseFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = DocumentClause
+
+    document = factory.SubFactory(
+        DocumentFactory, doc_type=Document.Type.CONTRACT
+    )
+    heading = factory.Faker("sentence", nb_words=2, locale="de_DE")
+    body = factory.Faker("paragraph", locale="de_DE")
+
+
+class DocumentClauseModelTest(TestCase):
+    def test_to_clause_pair_returns_heading_and_body(self) -> None:
+        clause = DocumentClauseFactory(
+            heading="Vertragsgegenstand", body="Der Auftragnehmer berät."
+        )
+        self.assertEqual(
+            clause.to_clause_pair(), ("Vertragsgegenstand", "Der Auftragnehmer berät.")
+        )
+
+    def test_clauses_keep_their_position_order(self) -> None:
+        document = DocumentFactory(doc_type=Document.Type.CONTRACT)
+        DocumentClauseFactory(document=document, heading="Zweite", position=2)
+        DocumentClauseFactory(document=document, heading="Erste", position=1)
+        self.assertEqual(
+            [pair[0] for pair in document.to_clauses()], ["Erste", "Zweite"]
+        )
+
+
+class ContractBuildTest(TestCase):
+    """The mapping from a saved document to a py_doc Contract."""
+
+    def _contract_document(self, **overrides: object) -> Document:
+        fields: dict[str, object] = {
+            "doc_type": Document.Type.CONTRACT,
+            "number": "2026-0099",
+            "subject": "Dienstleistungsvertrag 2026-0099",
+            "date": datetime.date(2026, 6, 24),
+            "party_a_label": "Auftraggeber",
+            "party_b_label": "Auftragnehmer",
+            "recipient_name": "Erika Empfänger",
+            "recipient_city": "Hamburg",
+        }
+        fields.update(overrides)
+        document = DocumentFactory(**fields)
+        DocumentClauseFactory(
+            document=document, position=1, heading="Vertragsgegenstand",
+            body="Der Auftragnehmer erbringt Beratungsleistungen.",
+        )
+        DocumentClauseFactory(
+            document=document, position=2, heading="Vergütung",
+            body="Die Vergütung beträgt 1.000 EUR netto.",
+        )
+        return document
+
+    def test_build_contract_carries_clauses_and_party_labels(self) -> None:
+        contract = self._contract_document().build_contract()
+        self.assertEqual(contract.party_a_label, "Auftraggeber")
+        self.assertEqual(contract.party_b_label, "Auftragnehmer")
+        self.assertEqual(
+            contract.clauses,
+            [
+                ("Vertragsgegenstand", "Der Auftragnehmer erbringt Beratungsleistungen."),
+                ("Vergütung", "Die Vergütung beträgt 1.000 EUR netto."),
+            ],
+        )
+
+    def test_build_contract_falls_back_to_default_party_labels(self) -> None:
+        contract = self._contract_document(
+            party_a_label="", party_b_label=""
+        ).build_contract()
+        self.assertEqual(contract.party_a_label, "Auftraggeber")
+        self.assertEqual(contract.party_b_label, "Auftragnehmer")
+
+    def test_render_pdf_produces_form_a_pdf_with_content(self) -> None:
+        import io
+
+        from pypdf import PdfReader
+
+        pdf_bytes = self._contract_document().render_pdf()
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+        text = "".join(
+            page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages
+        )
+        # The recipient, both clause headings and the numbered paragraphs must
+        # reach the page.
+        self.assertIn("Erika Empfänger", text)
+        self.assertIn("Vertragsgegenstand", text)
+        self.assertIn("Vergütung", text)
+        self.assertIn("§ 1", text)
+        self.assertIn("§ 2", text)
+
+
+def contract_post_data(sender: object, **overrides: str) -> dict[str, str]:
+    """Build a valid POST payload for the contract form + one clause.
+
+    Mirrors :func:`invoice_post_data` but carries the party-role labels and a
+    single clause row instead of a position.
+    """
+    data = {
+        "sender": str(sender.pk),
+        "number": "2026-0099",
+        "date": "2026-06-24",
+        "subject": "Dienstleistungsvertrag 2026-0099",
+        "party_a_label": "Auftraggeber",
+        "party_b_label": "Auftragnehmer",
+        "recipient_name": "Erika Empfänger",
+        "recipient_company": "", "recipient_street": "",
+        "recipient_postal_code": "", "recipient_city": "Hamburg",
+        "recipient_country": "", "recipient_contact": "",
+        "recipient_email": "", "recipient_phone": "", "recipient_vat_id": "",
+        "clauses-TOTAL_FORMS": "1", "clauses-INITIAL_FORMS": "0",
+        "clauses-MIN_NUM_FORMS": "0", "clauses-MAX_NUM_FORMS": "1000",
+        "clauses-0-id": "", "clauses-0-heading": "Vertragsgegenstand",
+        "clauses-0-body": "Der Auftragnehmer erbringt Beratungsleistungen.",
+        "clauses-0-DELETE": "",
+    }
+    data.update(overrides)
+    return data
+
+
+class ContractCreateViewTest(TestCase):
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.sender = SenderProfileFactory(user=self.user)
+
+    def test_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("documents:contract_create"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_get_prefills_today_and_default_sender(self) -> None:
+        default = SenderProfileFactory(user=self.user, is_default=True)
+        response = self.client.get(reverse("documents:contract_create"))
+        self.assertEqual(response.status_code, 200)
+        form = response.context["form"]
+        self.assertEqual(form.initial["date"], datetime.date.today())
+        self.assertEqual(form.initial["sender"], default.pk)
+
+    def test_get_prefills_recipient_from_address_book(self) -> None:
+        recipient = RecipientFactory(
+            user=self.user, name="Aus Adressbuch", city="Bremen"
+        )
+        url = reverse("documents:contract_create") + f"?recipient={recipient.pk}"
+        response = self.client.get(url)
+        self.assertEqual(
+            response.context["form"].initial["recipient_name"], "Aus Adressbuch"
+        )
+
+    def test_post_creates_contract_with_clauses(self) -> None:
+        response = self.client.post(
+            reverse("documents:contract_create"),
+            contract_post_data(self.sender),
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        document = Document.objects.get(number="2026-0099")
+        self.assertEqual(document.user, self.user)
+        self.assertEqual(document.doc_type, Document.Type.CONTRACT)
+        self.assertEqual(document.party_a_label, "Auftraggeber")
+        self.assertEqual(document.clauses.count(), 1)
+        clause = document.clauses.get()
+        self.assertEqual(clause.heading, "Vertragsgegenstand")
+        self.assertEqual(clause.position, 1)
+
+    def test_post_without_heading_is_rejected(self) -> None:
+        # A clause row with a body but no heading is incomplete and must not save.
+        data = contract_post_data(self.sender)
+        data["clauses-0-heading"] = ""
+        response = self.client.post(reverse("documents:contract_create"), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_post_without_sender_is_rejected(self) -> None:
+        data = contract_post_data(self.sender)
+        data["sender"] = ""
+        response = self.client.post(reverse("documents:contract_create"), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_cannot_use_another_users_sender(self) -> None:
+        other_sender = SenderProfileFactory()  # not owned by self.user
+        response = self.client.post(
+            reverse("documents:contract_create"),
+            contract_post_data(other_sender),
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Document.objects.count(), 0)

@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from django.contrib import admin
 
-from .models import Document, DocumentItem, Recipient
+from .models import Document, DocumentClause, DocumentItem, Recipient
 
 
 class DocumentItemInline(admin.TabularInline):
     model = DocumentItem
+    extra = 0
+
+
+class DocumentClauseInline(admin.TabularInline):
+    model = DocumentClause
     extra = 0
 
 
@@ -18,7 +23,7 @@ class DocumentAdmin(admin.ModelAdmin):
     list_filter = ("doc_type", "date")
     search_fields = ("number", "subject", "recipient_name", "recipient_company")
     date_hierarchy = "date"
-    inlines = [DocumentItemInline]
+    inlines = [DocumentItemInline, DocumentClauseInline]
 
 
 @admin.register(Recipient)

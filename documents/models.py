@@ -18,13 +18,19 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import models
-from py_doc import DocumentMeta, Form, Invoice, InvoiceItem, Offer, Party
+from py_doc import Contract, DocumentMeta, Form, Invoice, InvoiceItem, Offer, Party
 
 from accounts.models import SenderProfile
 
 # py_doc's own default; mirrored here so the field offers an editable starting
 # point instead of leaving the term blank.
 DEFAULT_PAYMENT_TERMS = "Zahlbar innerhalb von 14 Tagen ohne Abzug."
+
+# py_doc's own contract party labels, mirrored as editable defaults: the sender
+# is the Auftraggeber, the recipient the Auftragnehmer, unless the user renames
+# the roles to fit the contract at hand.
+DEFAULT_PARTY_A_LABEL = "Auftraggeber"
+DEFAULT_PARTY_B_LABEL = "Auftragnehmer"
 
 
 class Document(models.Model):
@@ -88,6 +94,19 @@ class Document(models.Model):
         null=True,
         blank=True,
         help_text="Bis wann das Angebot gilt — erscheint unter den Positionen.",
+    )
+    # Used by the contract to name the two parties; ignored by other types.
+    party_a_label = models.CharField(
+        "Rolle Absender",
+        max_length=80,
+        default=DEFAULT_PARTY_A_LABEL,
+        help_text="Wie der Absender im Vertrag heißt, z. B. „Auftraggeber“.",
+    )
+    party_b_label = models.CharField(
+        "Rolle Empfänger",
+        max_length=80,
+        default=DEFAULT_PARTY_B_LABEL,
+        help_text="Wie der Empfänger im Vertrag heißt, z. B. „Auftragnehmer“.",
     )
 
     # --- Empfänger (inline; py_doc Party) ---
@@ -188,17 +207,43 @@ class Document(models.Model):
             valid_until=valid_until,
         )
 
+    def to_clauses(self) -> list[tuple[str, str]]:
+        """Translate the stored clauses into py_doc's ``(heading, body)`` pairs.
+
+        py_doc numbers the clauses itself (§ 1, § 2 …) from this ordered list, so
+        the document only supplies each clause's heading and text.
+        """
+        return [clause.to_clause_pair() for clause in self.clauses.all()]
+
+    def build_contract(self) -> Contract:
+        """Assemble the py_doc :class:`Contract` for this document.
+
+        The sender and recipient become the two contracting parties (named by the
+        editable role labels), and the stored clauses become py_doc's numbered
+        paragraphs; py_doc supplies the standard intro line.
+        """
+        return Contract(
+            sender=self.sender.to_sender(),
+            recipient=self.to_recipient(),
+            meta=self.to_meta(),
+            clauses=self.to_clauses(),
+            party_a_label=self.party_a_label or DEFAULT_PARTY_A_LABEL,
+            party_b_label=self.party_b_label or DEFAULT_PARTY_B_LABEL,
+        )
+
     def render_pdf(self) -> bytes:
         """Render this document to a DIN 5008 **Form A** PDF (bytes).
 
-        Dispatches on the document type; the invoice (M4) and offer (M5) are
-        wired here, the remaining types follow in their own milestones. The app
-        always renders Form A, so the form choice is fixed.
+        Dispatches on the document type; the invoice (M4), offer (M5) and
+        contract (M6) are wired here, the remaining types follow in their own
+        milestones. The app always renders Form A, so the form choice is fixed.
         """
         if self.doc_type == self.Type.INVOICE:
             return self.build_invoice().render(Form.A)
         if self.doc_type == self.Type.OFFER:
             return self.build_offer().render(Form.A)
+        if self.doc_type == self.Type.CONTRACT:
+            return self.build_contract().render(Form.A)
         raise NotImplementedError(
             f"PDF-Erzeugung für Typ {self.doc_type!r} folgt in einem späteren Schritt."
         )
@@ -340,3 +385,32 @@ class DocumentItem(models.Model):
             unit_price_cents=self.unit_price_cents,
             vat_rate=float(self.vat_rate),
         )
+
+
+class DocumentClause(models.Model):
+    """One clause (§-Paragraph) of a contract.
+
+    py_doc takes a contract's clauses as an ordered list of ``(heading, body)``
+    pairs and numbers them itself, so a clause only needs its heading, its text
+    and the position that fixes its order on the page.
+    """
+
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.CASCADE,
+        related_name="clauses",
+    )
+    position = models.PositiveIntegerField("Position", default=0)
+    heading = models.CharField("Überschrift", max_length=200)
+    body = models.TextField("Text")
+
+    class Meta:
+        # Clauses print in the order the user arranged them on the form.
+        ordering = ["position", "id"]
+
+    def __str__(self) -> str:
+        return self.heading
+
+    def to_clause_pair(self) -> tuple[str, str]:
+        """Return this clause as the ``(heading, body)`` pair py_doc expects."""
+        return (self.heading, self.body)

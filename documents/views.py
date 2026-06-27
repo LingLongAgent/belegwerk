@@ -15,6 +15,8 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from .forms import (
+    ContractClauseFormSet,
+    ContractForm,
     InvoiceForm,
     InvoiceItemFormSet,
     OfferForm,
@@ -28,7 +30,8 @@ DOC_TYPES = [
      "url_name": "documents:invoice_create"},
     {"key": "angebot", "name": "Angebot", "desc": "Positionen und Gültigkeit.",
      "url_name": "documents:offer_create"},
-    {"key": "vertrag", "name": "Vertrag", "desc": "Parteien, §-Klauseln, Unterschriften."},
+    {"key": "vertrag", "name": "Vertrag", "desc": "Parteien, §-Klauseln, Unterschriften.",
+     "url_name": "documents:contract_create"},
     {"key": "zahlungserinnerung", "name": "Zahlungserinnerung", "desc": "Bezug auf Rechnung, Frist."},
 ]
 
@@ -121,6 +124,50 @@ def offer_create(request: HttpRequest) -> HttpResponse:
     return render(
         request,
         "documents/offer_form.html",
+        {"form": form, "formset": formset},
+    )
+
+
+@login_required
+def contract_create(request: HttpRequest) -> HttpResponse:
+    """Create a Vertrag: contract fields plus a clauses formset → saved Document.
+
+    Mirrors :func:`invoice_create` — today's date, the standard sender and an
+    optional ``?recipient=<id>`` address-book entry are pre-filled — but stores a
+    document of type Vertrag, where the sender and recipient are the two parties
+    and the formset holds the numbered §-clauses. The PDF preview/download
+    follows in M8.
+    """
+    if request.method == "POST":
+        form = ContractForm(request.POST, user=request.user)
+        formset = ContractClauseFormSet(request.POST)
+        if form.is_valid() and formset.is_valid():
+            document = form.save(commit=False)
+            document.user = request.user
+            document.doc_type = Document.Type.CONTRACT
+            document.save()
+            formset.instance = document
+            clauses = formset.save(commit=False)
+            for position, clause in enumerate(clauses, start=1):
+                clause.position = position
+                clause.save()
+            for deleted in formset.deleted_objects:
+                deleted.delete()
+            messages.success(request, "Vertrag gespeichert.")
+            return redirect("dashboard")
+    else:
+        initial = {"date": datetime.date.today()}
+        recipient_id = request.GET.get("recipient")
+        if recipient_id:
+            recipient = get_object_or_404(
+                Recipient, pk=recipient_id, user=request.user
+            )
+            initial.update(recipient.as_document_initial())
+        form = ContractForm(user=request.user, initial=initial)
+        formset = ContractClauseFormSet()
+    return render(
+        request,
+        "documents/contract_form.html",
         {"form": form, "formset": formset},
     )
 

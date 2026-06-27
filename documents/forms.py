@@ -14,7 +14,7 @@ from django import forms
 
 from accounts.models import SenderProfile
 
-from .models import Document, DocumentItem, Recipient
+from .models import Document, DocumentClause, DocumentItem, Recipient
 
 
 class RecipientForm(forms.ModelForm):
@@ -163,6 +163,80 @@ class OfferForm(SenderScopedFormMixin, forms.ModelForm):
             "valid_until": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
             **RECIPIENT_WIDGETS,
         }
+
+
+class ContractForm(SenderScopedFormMixin, forms.ModelForm):
+    """The contract's own fields: sender, metadata, the two party roles, recipient.
+
+    Mirrors the other document forms but carries the editable party-role labels
+    (who is the Auftraggeber, who the Auftragnehmer) in place of positions; the
+    clauses live in a separate formset (:data:`ContractClauseFormSet`).
+    """
+
+    class Meta:
+        model = Document
+        fields = [
+            "sender",
+            "number",
+            "date",
+            "subject",
+            "party_a_label",
+            "party_b_label",
+            "recipient_name",
+            "recipient_company",
+            "recipient_street",
+            "recipient_postal_code",
+            "recipient_city",
+            "recipient_country",
+            "recipient_contact",
+            "recipient_email",
+            "recipient_phone",
+            "recipient_vat_id",
+        ]
+        widgets = {
+            "number": forms.TextInput(attrs={"placeholder": "2026-0001"}),
+            "date": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+            "subject": forms.TextInput(
+                attrs={"placeholder": "Dienstleistungsvertrag 2026-0001"}
+            ),
+            "party_a_label": forms.TextInput(attrs={"placeholder": "Auftraggeber"}),
+            "party_b_label": forms.TextInput(attrs={"placeholder": "Auftragnehmer"}),
+            **RECIPIENT_WIDGETS,
+        }
+
+
+class ContractClauseForm(forms.ModelForm):
+    """One clause row: a heading and its paragraph text.
+
+    py_doc numbers the clauses itself, so the user only supplies each clause's
+    heading and body; the order comes from the formset's arrangement.
+    """
+
+    class Meta:
+        model = DocumentClause
+        fields = ["heading", "body"]
+        widgets = {
+            "heading": forms.TextInput(
+                attrs={"class": "input", "placeholder": "Vertragsgegenstand"}
+            ),
+            "body": forms.Textarea(
+                attrs={
+                    "class": "input",
+                    "rows": 3,
+                    "placeholder": "Der Auftragnehmer erbringt die folgenden Leistungen …",
+                }
+            ),
+        }
+
+
+# Inline clauses for a contract: at least one empty row, rows removable.
+ContractClauseFormSet = forms.inlineformset_factory(
+    Document,
+    DocumentClause,
+    form=ContractClauseForm,
+    extra=1,
+    can_delete=True,
+)
 
 
 class DocumentItemForm(forms.ModelForm):

@@ -1,0 +1,97 @@
+{% extends "main.html" %}
+{% block title %}Neuer Vertrag · Belegwerk{% endblock %}
+{% block page_title %}Neuer Vertrag{% endblock %}
+{% block page_sub %}<div class="page-sub">Parteien und Klauseln ausfüllen — Belegwerk nummeriert die Paragraphen (§ 1, § 2 …) selbst.</div>{% endblock %}
+{% block nav_new %}active{% endblock %}
+{% block content %}
+<form method="post" id="contract-form">{% csrf_token %}
+  {% if form.non_field_errors %}<div class="field-error">{{ form.non_field_errors }}</div>{% endif %}
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Absender &amp; Eckdaten</h2></div>
+    {% include "accounts/_field.html" with field=form.sender %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.number %}
+      {% include "accounts/_field.html" with field=form.date %}
+    </div>
+    {% include "accounts/_field.html" with field=form.subject %}
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Parteien</h2></div>
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.party_a_label %}
+      {% include "accounts/_field.html" with field=form.party_b_label %}
+    </div>
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Empfänger</h2></div>
+    {% include "accounts/_field.html" with field=form.recipient_name %}
+    {% include "accounts/_field.html" with field=form.recipient_company %}
+    {% include "accounts/_field.html" with field=form.recipient_street %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.recipient_postal_code %}
+      {% include "accounts/_field.html" with field=form.recipient_city %}
+    </div>
+    {% include "accounts/_field.html" with field=form.recipient_country %}
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.recipient_contact %}
+      {% include "accounts/_field.html" with field=form.recipient_vat_id %}
+    </div>
+    <div class="form-grid">
+      {% include "accounts/_field.html" with field=form.recipient_email %}
+      {% include "accounts/_field.html" with field=form.recipient_phone %}
+    </div>
+  </div>
+
+  <div class="card card-pad" style="margin-bottom:18px">
+    <div class="section-head"><h2>Klauseln</h2></div>
+    {{ formset.management_form }}
+    {% if formset.non_form_errors %}<div class="field-error">{{ formset.non_form_errors }}</div>{% endif %}
+    <div id="clauses-body">
+      {% for clause_form in formset %}
+      <div class="clause-row" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px">
+        {{ clause_form.id }}
+        {% include "accounts/_field.html" with field=clause_form.heading %}
+        {% include "accounts/_field.html" with field=clause_form.body %}
+        {% if formset.can_delete %}<label class="muted" style="font-size:12px">{{ clause_form.DELETE }} Klausel entfernen</label>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <button class="btn btn-ghost btn-sm" type="button" id="add-clause">+ Klausel hinzufügen</button>
+  </div>
+
+  <div style="display:flex;gap:10px">
+    <button class="btn btn-primary" type="submit">Vertrag speichern</button>
+    <a class="btn btn-ghost" href="{% url 'documents:choose_type' %}">Abbrechen</a>
+  </div>
+
+  {# Blank clause blueprint for "+ Klausel hinzufügen"; __prefix__ is renumbered in JS. #}
+  <template id="empty-clause">
+    <div class="clause-row" style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px">
+      {{ formset.empty_form.id }}
+      {% include "accounts/_field.html" with field=formset.empty_form.heading %}
+      {% include "accounts/_field.html" with field=formset.empty_form.body %}
+      <label class="muted" style="font-size:12px">{{ formset.empty_form.DELETE }} Klausel entfernen</label>
+    </div>
+  </template>
+</form>
+
+<script>
+(function () {
+  const totalForms = document.getElementById("id_{{ formset.prefix }}-TOTAL_FORMS");
+  const body = document.getElementById("clauses-body");
+  const tmpl = document.getElementById("empty-clause");
+
+  document.getElementById("add-clause").addEventListener("click", function () {
+    const index = parseInt(totalForms.value, 10);
+    const html = tmpl.innerHTML.replace(/__prefix__/g, index);
+    const wrap = document.createElement("div");
+    wrap.innerHTML = html.trim();
+    body.appendChild(wrap.firstElementChild);
+    totalForms.value = index + 1;
+  });
+})();
+</script>
+{% endblock %}
