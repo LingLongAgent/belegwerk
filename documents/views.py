@@ -7,16 +7,19 @@ profiles follow. A recipient is always saved with its owner attached.
 
 from __future__ import annotations
 
+import datetime
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
-from .forms import RecipientForm
-from .models import Recipient
+from .forms import InvoiceForm, InvoiceItemFormSet, RecipientForm
+from .models import Document, Recipient
 
 DOC_TYPES = [
-    {"key": "rechnung", "name": "Rechnung", "desc": "Positionen, USt, Summen, Zahlungsziel."},
+    {"key": "rechnung", "name": "Rechnung", "desc": "Positionen, USt, Summen, Zahlungsziel.",
+     "url_name": "documents:invoice_create"},
     {"key": "angebot", "name": "Angebot", "desc": "Positionen und Gültigkeit."},
     {"key": "vertrag", "name": "Vertrag", "desc": "Parteien, §-Klauseln, Unterschriften."},
     {"key": "zahlungserinnerung", "name": "Zahlungserinnerung", "desc": "Bezug auf Rechnung, Frist."},
@@ -27,6 +30,49 @@ DOC_TYPES = [
 def choose_type(request: HttpRequest) -> HttpResponse:
     """Dokumenttyp wählen — Formulare folgen je Typ (Build-Loop)."""
     return render(request, "documents/choose_type.html", {"types": DOC_TYPES})
+
+
+@login_required
+def invoice_create(request: HttpRequest) -> HttpResponse:
+    """Create a Rechnung: invoice fields plus a positions formset → saved Document.
+
+    A fresh form arrives pre-filled where it sensibly can be — today's date, the
+    user's standard sender profile, and (via ``?recipient=<id>``) a chosen
+    address-book entry — so the user mostly fills in the positions. On success the
+    document and its positions are stored; the PDF preview/download follows in M8.
+    """
+    if request.method == "POST":
+        form = InvoiceForm(request.POST, user=request.user)
+        formset = InvoiceItemFormSet(request.POST)
+        if form.is_valid() and formset.is_valid():
+            document = form.save(commit=False)
+            document.user = request.user
+            document.doc_type = Document.Type.INVOICE
+            document.save()
+            formset.instance = document
+            items = formset.save(commit=False)
+            for position, item in enumerate(items, start=1):
+                item.position = position
+                item.save()
+            for deleted in formset.deleted_objects:
+                deleted.delete()
+            messages.success(request, "Rechnung gespeichert.")
+            return redirect("dashboard")
+    else:
+        initial = {"date": datetime.date.today()}
+        recipient_id = request.GET.get("recipient")
+        if recipient_id:
+            recipient = get_object_or_404(
+                Recipient, pk=recipient_id, user=request.user
+            )
+            initial.update(recipient.as_document_initial())
+        form = InvoiceForm(user=request.user, initial=initial)
+        formset = InvoiceItemFormSet()
+    return render(
+        request,
+        "documents/invoice_form.html",
+        {"form": form, "formset": formset},
+    )
 
 
 @login_required

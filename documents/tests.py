@@ -9,6 +9,7 @@ carry the German date and the right Informationsblock labels per document type.
 from __future__ import annotations
 
 import datetime
+from decimal import Decimal
 
 import factory
 from django.test import TestCase
@@ -17,7 +18,8 @@ from py_doc import DocumentMeta, Party
 
 from accounts.tests import SenderProfileFactory, UserFactory
 
-from .models import Document, Recipient
+from .forms import DocumentItemForm
+from .models import Document, DocumentItem, Recipient
 
 
 class DocumentFactory(factory.django.DjangoModelFactory):
@@ -250,3 +252,200 @@ class RecipientViewTest(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertTrue(Recipient.objects.filter(pk=other.pk).exists())
+
+
+# --- M4: Rechnung — Positionen, py_doc-Invoice und Form-A-PDF ---
+
+
+class DocumentItemFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = DocumentItem
+
+    document = factory.SubFactory(DocumentFactory)
+    description = factory.Faker("bs", locale="de_DE")
+    quantity = 2
+    unit = "h"
+    unit_price_cents = 5000
+    vat_rate = factory.LazyFunction(lambda: Decimal("0.19"))
+
+
+class DocumentItemModelTest(TestCase):
+    def test_to_line_item_casts_to_pydoc_shape(self) -> None:
+        item = DocumentItemFactory(
+            description="Beratung", quantity=Decimal("3"), unit="h",
+            unit_price_cents=5000, vat_rate=Decimal("0.19"),
+        )
+        line = item.to_line_item()
+        self.assertEqual(line.description, "Beratung")
+        self.assertEqual(line.quantity, 3.0)
+        self.assertEqual(line.unit, "h")
+        self.assertEqual(line.unit_price_cents, 5000)
+        self.assertEqual(line.vat_rate, 0.19)
+
+
+class InvoiceBuildTest(TestCase):
+    """The mapping from a saved document to a py_doc Invoice, and its totals."""
+
+    def _invoice_document(self) -> Document:
+        document = DocumentFactory(
+            doc_type=Document.Type.INVOICE,
+            number="2026-0007",
+            subject="Rechnung 2026-0007",
+            date=datetime.date(2026, 6, 24),
+            recipient_name="Erika Empfänger",
+            recipient_city="Hamburg",
+        )
+        DocumentItemFactory(
+            document=document, description="Beratung", quantity=Decimal("2"),
+            unit="h", unit_price_cents=5000, vat_rate=Decimal("0.19"),
+        )
+        DocumentItemFactory(
+            document=document, description="Lizenz", quantity=Decimal("1"),
+            unit="Stk", unit_price_cents=10000, vat_rate=Decimal("0.19"),
+        )
+        return document
+
+    def test_build_invoice_totals(self) -> None:
+        invoice = self._invoice_document().build_invoice()
+        totals = invoice.totals()
+        # 2×50 € + 1×100 € = 200 € net, 19 % VAT → 238 € gross.
+        self.assertEqual(totals.net_cents, 20000)
+        self.assertEqual(totals.gross_cents, 23800)
+
+    def test_render_pdf_produces_form_a_pdf_with_content(self) -> None:
+        import io
+
+        from pypdf import PdfReader
+
+        pdf_bytes = self._invoice_document().render_pdf()
+        self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+        text = "".join(
+            page.extract_text() for page in PdfReader(io.BytesIO(pdf_bytes)).pages
+        )
+        # The recipient, a position and the gross total must reach the page.
+        self.assertIn("Erika Empfänger", text)
+        self.assertIn("Beratung", text)
+        self.assertIn("Rechnung 2026-0007", text)
+
+    def test_render_pdf_rejects_unimplemented_types(self) -> None:
+        document = DocumentFactory(doc_type=Document.Type.CONTRACT)
+        with self.assertRaises(NotImplementedError):
+            document.render_pdf()
+
+
+class DocumentItemFormTest(TestCase):
+    def test_euro_input_is_stored_as_cents(self) -> None:
+        document = DocumentFactory(doc_type=Document.Type.INVOICE)
+        form = DocumentItemForm(
+            {
+                "description": "Beratung", "quantity": "2", "unit": "h",
+                "unit_price_euro": "49.90", "vat_rate": "0.19",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        item = form.save(commit=False)
+        item.document = document
+        item.save()
+        self.assertEqual(item.unit_price_cents, 4990)
+        self.assertEqual(item.vat_rate, Decimal("0.19"))
+
+    def test_editing_shows_euros_back(self) -> None:
+        item = DocumentItemFactory(unit_price_cents=4990)
+        form = DocumentItemForm(instance=item)
+        self.assertEqual(form.fields["unit_price_euro"].initial, Decimal("49.90"))
+
+
+def invoice_post_data(sender: object, **overrides: str) -> dict[str, str]:
+    """Build a valid POST payload for the invoice form + one position.
+
+    Mirrors what the browser sends: every InvoiceForm field plus the formset's
+    management form and a single filled position row. ``overrides`` lets a test
+    tweak individual keys.
+    """
+    data = {
+        "sender": str(sender.pk),
+        "number": "2026-0001",
+        "date": "2026-06-24",
+        "subject": "Rechnung 2026-0001",
+        "payment_terms": "Zahlbar innerhalb von 14 Tagen ohne Abzug.",
+        "recipient_name": "Erika Empfänger",
+        "recipient_company": "", "recipient_street": "",
+        "recipient_postal_code": "", "recipient_city": "Hamburg",
+        "recipient_country": "", "recipient_contact": "",
+        "recipient_email": "", "recipient_phone": "", "recipient_vat_id": "",
+        "items-TOTAL_FORMS": "1", "items-INITIAL_FORMS": "0",
+        "items-MIN_NUM_FORMS": "0", "items-MAX_NUM_FORMS": "1000",
+        "items-0-id": "", "items-0-description": "Beratung",
+        "items-0-quantity": "2", "items-0-unit": "h",
+        "items-0-unit_price_euro": "50.00", "items-0-vat_rate": "0.19",
+        "items-0-DELETE": "",
+    }
+    data.update(overrides)
+    return data
+
+
+class InvoiceCreateViewTest(TestCase):
+    def setUp(self) -> None:
+        self.user = UserFactory()
+        self.client.force_login(self.user)
+        self.sender = SenderProfileFactory(user=self.user)
+
+    def test_requires_login(self) -> None:
+        self.client.logout()
+        response = self.client.get(reverse("documents:invoice_create"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_get_prefills_today_and_default_sender(self) -> None:
+        default = SenderProfileFactory(user=self.user, is_default=True)
+        response = self.client.get(reverse("documents:invoice_create"))
+        self.assertEqual(response.status_code, 200)
+        form = response.context["form"]
+        self.assertEqual(form.initial["date"], datetime.date.today())
+        self.assertEqual(form.initial["sender"], default.pk)
+        # Only the user's own sender profiles may be selectable.
+        SenderProfileFactory()  # another user's profile
+        self.assertCountEqual(
+            list(form.fields["sender"].queryset),
+            list(self.user.sender_profiles.all()),
+        )
+
+    def test_get_prefills_recipient_from_address_book(self) -> None:
+        recipient = RecipientFactory(
+            user=self.user, name="Aus Adressbuch", city="Bremen"
+        )
+        url = reverse("documents:invoice_create") + f"?recipient={recipient.pk}"
+        response = self.client.get(url)
+        self.assertEqual(
+            response.context["form"].initial["recipient_name"], "Aus Adressbuch"
+        )
+
+    def test_post_creates_invoice_with_positions(self) -> None:
+        response = self.client.post(
+            reverse("documents:invoice_create"),
+            invoice_post_data(self.sender),
+        )
+        self.assertRedirects(response, reverse("dashboard"))
+        document = Document.objects.get(number="2026-0001")
+        self.assertEqual(document.user, self.user)
+        self.assertEqual(document.doc_type, Document.Type.INVOICE)
+        self.assertEqual(document.items.count(), 1)
+        item = document.items.get()
+        self.assertEqual(item.description, "Beratung")
+        self.assertEqual(item.unit_price_cents, 5000)
+        self.assertEqual(item.position, 1)
+
+    def test_post_without_sender_is_rejected(self) -> None:
+        data = invoice_post_data(self.sender)
+        data["sender"] = ""
+        response = self.client.post(reverse("documents:invoice_create"), data)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)
+
+    def test_cannot_use_another_users_sender(self) -> None:
+        other_sender = SenderProfileFactory()  # not owned by self.user
+        response = self.client.post(
+            reverse("documents:invoice_create"),
+            invoice_post_data(other_sender),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Document.objects.count(), 0)

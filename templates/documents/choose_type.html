@@ -6,8 +6,16 @@
 {% block content %}
 <div class="kpi-grid">
   {% for t in types %}
+  {% if t.url_name %}
+  <a class="card card-pad" style="display:block;text-decoration:none" href="{% url t.url_name %}">
+    <h2 style="margin:0 0 6px;font-size:15px">{{ t.name }}</h2>
+    <p class="muted" style="font-size:13px">{{ t.desc }}</p>
+    <span class="badge badge-info" style="margin-top:8px;display:inline-block">Verfügbar</span></a>
+  {% else %}
   <div class="card card-pad"><h2 style="margin:0 0 6px;font-size:15px">{{ t.name }}</h2>
-    <p class="muted" style="font-size:13px">{{ t.desc }}</p></div>
+    <p class="muted" style="font-size:13px">{{ t.desc }}</p>
+    <span class="badge badge-muted" style="margin-top:8px;display:inline-block">In Arbeit</span></div>
+  {% endif %}
   {% endfor %}
 </div>
 {% endblock %}
